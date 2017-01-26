@@ -41,7 +41,7 @@ Please cite the original paper in your publications if it helps your research:
 First, we need to build our own "catkin workspace". Mine is `~/pose_ws`. Please build the path and init your workspace. Then, run my commands in your terminal:
 ```
 cd ~/pose_ws/src
-git clone --recursive https://github.com/BoomFan/ROSposeEstimation.git
+git clone --recursive https://github.com/BoomFan/rtpose_ros.git
 ```
 Since we use the C++ codes and the libraries of the original writer, we need to copy their original code and then compile. After that, compile the whole catkin workspace using my codes.
 

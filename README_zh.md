@@ -51,7 +51,7 @@ git clone --recursive https://github.com/BoomFan/ROSposeEstimation.git
 
 ------------------------------- 本代码库具体使用步骤如下 -------------------------------
 
-步骤1，先进入路径~/pose_ws/src/rtpose，把https://github.com/CMU-Perceptual-Computing-Lab/caffe_rtpose 里面的东西git clone 下来，
+步骤1，先进入路径~/pose_ws/src/rtpose_ros，把https://github.com/CMU-Perceptual-Computing-Lab/caffe_rtpose 里面的东西git clone 下来，
 
 步骤2，然后把Makefile.config.Ubuntu14.example文件配置好（因这里我是用的是Ubuntu14.04,如果您使用Ubuntu16,请修改Makefile.config.Ubuntu16.example，但我并未测试过Ubuntu16），这里将我自己的改动记录如下：
 
@@ -108,7 +108,7 @@ CUDA_ARCH := -gencode arch=compute_20,code=sm_20 \
 ```
 进行编译了。但由于我遇到了许多编译错误，在此先解决一个报错。
 
-先改这个路径下~/pose_ws/src/rtpose/caffe_rtpose/cmake/External的gflags.cmake文件中的这一行：
+先改这个路径下~/pose_ws/src/rtpose_ros/caffe_rtpose/cmake/External的gflags.cmake文件中的这一行：
 ```
 set(GFLAGS_LIBRARIES ${gflags_INSTALL}/lib/libgflags.a ${CMAKE_THREAD_LIBS_INIT})
 ```
@@ -124,30 +124,30 @@ set(GFLAGS_LIBRARIES ${gflags_INSTALL}/lib/libgflags.so ${CMAKE_THREAD_LIBS_INIT
 
 步骤4，稍安勿躁，我们再来处理一个报错：
 ```
-In file included from /home/roahm/pose_ws/src/rtpose/caffe_rtpose/include/caffe/cpm/layers/imresize_layer.hpp:4:0,
-                 from /home/roahm/pose_ws/src/rtpose/src/rtpose_node.cpp:33:
-/home/roahm/pose_ws/src/rtpose/caffe_rtpose/include/caffe/blob.hpp:9:34: fatal error: caffe/proto/caffe.pb.h: No such file or directory
+In file included from /home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/cpm/layers/imresize_layer.hpp:4:0,
+                 from /home/roahm/pose_ws/src/rtpose_ros/src/rtpose_node.cpp:33:
+/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/blob.hpp:9:34: fatal error: caffe/proto/caffe.pb.h: No such file or directory
 ```
 解决方法看这里：http://blog.csdn.net/xmzwlw/article/details/48270225
 
-核心思想就是要在`~/pose_ws/src/rtpose/caffe_rtpose/include/caffe`里面建一个叫做`proto`的文件夹，然后要在这个文件夹里生成`caffe.pb.h`和`caffe.pb.cc`这样的两个文件。简言之：
+核心思想就是要在`~/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe`里面建一个叫做`proto`的文件夹，然后要在这个文件夹里生成`caffe.pb.h`和`caffe.pb.cc`这样的两个文件。简言之：
 ```
-cd ~/pose_ws/src/rtpose/caffe_rtpose/src/caffe/proto
-protoc --cpp_out=/home/roahm/pose_ws/src/rtpose/caffe_rtpose/include/caffe/proto caffe.proto
+cd ~/pose_ws/src/rtpose_ros/caffe_rtpose/src/caffe/proto
+protoc --cpp_out=/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/proto caffe.proto
 ```
 请根据自己所需修改catkin workspace路径.
 
 
-步骤5，在路径`~/pose_ws/src/rtpose/caffe_rtpose`下:
+步骤5，在路径`~/pose_ws/src/rtpose_ros/caffe_rtpose`下:
 ```
 chmod u+x install_caffe_and_cpm.sh
 ./install_caffe_and_cpm.sh
 ```
 就能把原代码库编译好了
 
-步骤6，如果你克隆了我的代码，我已配置好`~/pose_ws/src/rtpose`路径下所需的`CMakeLists.txt`以及`package.xml`文件
+步骤6，如果你克隆了我的代码，我已配置好`~/pose_ws/src/rtpose_ros`路径下所需的`CMakeLists.txt`以及`package.xml`文件
 
-步骤7, 然后修改你要运行的node的cpp文件，如：`~/pose_ws/src/rtpose/src/rtpose_node.cpp`文件。修改里面要发布的topic名称和要订阅的topic名称，以及其他参数，例如GPU数量，caffemodel存储的位置，等。
+步骤7, 然后修改你要运行的node的cpp文件，如：`~/pose_ws/src/rtpose_ros/src/rtpose_node.cpp`文件。修改里面要发布的topic名称和要订阅的topic名称，以及其他参数，例如GPU数量，caffemodel存储的位置，等。
 
 然后再到`~/pose_ws`路径下
 ```

@@ -156,6 +156,6 @@ catkin_make
 
 步骤8,恭喜你编译成功，运行下列代码以启动ROS节点
 ```
-rosrun rtpose rtpose_node
+rosrun rtpose_ros rtpose_node
 ```
 

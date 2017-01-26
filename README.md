@@ -165,5 +165,5 @@ Then `cd ~/pose_ws` and `catkin_make`
 
 Step 8, Congratulations! You may run the ROS node now!
 ```
-rosrun rtpose rtpose_node
+rosrun rtpose_ros rtpose_node
 ```

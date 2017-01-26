@@ -41,7 +41,7 @@ https://github.com/ZheC/Realtime_Multi-Person_Pose_Estimation
 首先我们需要建立自己的catkin workspace, 本案例中假定是~/pose_ws路径，请先自行创建路径并初始化。然后
 ```
 cd ~/pose_ws/src
-git clone --recursive https://github.com/BoomFan/ROSposeEstimation.git
+git clone --recursive https://github.com/BoomFan/rtpose_ros.git
 ```
 由于本代码调用了原作者提供的C++代码及其library.所以我们需要先拷贝原作者的代码，编译成功后，再运用我的代码，对整个catkin workspace进行编译。
 

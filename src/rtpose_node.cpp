@@ -70,8 +70,8 @@ DEFINE_string(video,                "",             "Use a video file instead of
 DEFINE_string(image_dir,            "",             "Process a directory of images.");
 DEFINE_int32(start_frame,           0,              "Skip to frame # of video");
 
-DEFINE_string(caffemodel, "/home/roahm/pose_ws/src/rtpose/caffe_rtpose/model/coco/pose_iter_440000.caffemodel", "Caffe model.");
-DEFINE_string(caffeproto, "/home/roahm/pose_ws/src/rtpose/caffe_rtpose/model/coco/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
+DEFINE_string(caffemodel, "/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/model/coco/pose_iter_440000.caffemodel", "Caffe model.");
+DEFINE_string(caffeproto, "/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/model/coco/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
 //DEFINE_string(caffemodel, "model/coco/pose_iter_440000.caffemodel", "Caffe model.");
 //DEFINE_string(caffeproto, "model/coco/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
 // DEFINE_string(caffemodel, "/home/roahm/pose_ws/src/rtpose/caffe_rtpose/model/mpi/pose_iter_160000.caffemodel", "Caffe model.");

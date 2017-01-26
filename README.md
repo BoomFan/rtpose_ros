@@ -55,7 +55,7 @@ Or, more specifically, Step 1&2 here https://github.com/CMU-Perceptual-Computing
 
 ------------------------------- Steps for compiling their codes and then my codes -------------------------------
 
-Step 1, Enter this directory `~/pose_ws/src/rtpose`，and `git clone --recursive https://github.com/CMU-Perceptual-Computing-Lab/caffe_rtpose`
+Step 1, Enter this directory `~/pose_ws/src/rtpose_ros`，and `git clone --recursive https://github.com/CMU-Perceptual-Computing-Lab/caffe_rtpose`
 
 
 Step 2, Modify this file `Makefile.config.Ubuntu14.example`  based on your needs. （Since I'm using Ubuntu14.04.) If you are using Ubuntu16, please modify `Makefile.config.Ubuntu16.example`. However, I havn't try it yet. Nothing is guaranteed.
@@ -116,7 +116,7 @@ Step 3, According to original authurs, theoretically, we may compile their codes
 ```
 However, annoying errors poped out, so let's solve these problems first.
 
-In this directory `~/pose_ws/src/rtpose/caffe_rtpose/cmake/External`, this file `gflags.cmake`. Find this line：
+In this directory `~/pose_ws/src/rtpose_ros/caffe_rtpose/cmake/External`, this file `gflags.cmake`. Find this line：
 ```
 set(GFLAGS_LIBRARIES ${gflags_INSTALL}/lib/libgflags.a ${CMAKE_THREAD_LIBS_INIT})
 ```
@@ -133,21 +133,21 @@ If you don't do so, you'll see this error:
 
 Step 4, Now, take your time, there's one more bug here:
 ```
-In file included from /home/roahm/pose_ws/src/rtpose/caffe_rtpose/include/caffe/cpm/layers/imresize_layer.hpp:4:0,
-                 from /home/roahm/pose_ws/src/rtpose/src/rtpose_node.cpp:33:
-/home/roahm/pose_ws/src/rtpose/caffe_rtpose/include/caffe/blob.hpp:9:34: fatal error: caffe/proto/caffe.pb.h: No such file or directory
+In file included from /home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/cpm/layers/imresize_layer.hpp:4:0,
+                 from /home/roahm/pose_ws/src/rtpose_ros/src/rtpose_node.cpp:33:
+/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/blob.hpp:9:34: fatal error: caffe/proto/caffe.pb.h: No such file or directory
 ```
 There is a way to deal with this error, here tells you why：http://blog.csdn.net/xmzwlw/article/details/48270225
 
-Basically, is to creat this directory`~/pose_ws/src/rtpose/caffe_rtpose/include/caffe/proto`, and run the following comands one by one：
+Basically, is to creat this directory`~/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/proto`, and run the following comands one by one：
 ```
-cd ~/pose_ws/src/rtpose/caffe_rtpose/src/caffe/proto
-protoc --cpp_out=/home/roahm/pose_ws/src/rtpose/caffe_rtpose/include/caffe/proto caffe.proto
+cd ~/pose_ws/src/rtpose_ros/caffe_rtpose/src/caffe/proto
+protoc --cpp_out=/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/proto caffe.proto
 ```
 (Please change the path into your catkin workspace if you need to do so.)
 
 
-Step 5, Now, go back to `~/pose_ws/src/rtpose/caffe_rtpose`, we can finally compile their original codes:
+Step 5, Now, go back to `~/pose_ws/src/rtpose_ros/caffe_rtpose`, we can finally compile their original codes:
 ```
 chmod u+x install_caffe_and_cpm.sh
 ./install_caffe_and_cpm.sh
@@ -155,10 +155,10 @@ chmod u+x install_caffe_and_cpm.sh
 
 
 
-Step 6, If you already `git clone` my codes, you already have my `CMakeLists.txt` and `package.xml` under directory `~/pose_ws/src/rtpose`
+Step 6, If you already `git clone` my codes, you already have my `CMakeLists.txt` and `package.xml` under directory `~/pose_ws/src/rtpose_ros`
 
 
-Step 7, Now, edit the cpp node file that you want to run. For example, in this file `~/pose_ws/src/rtpose/src/rtpose_node.cpp`, you may need to change the topic name that you want to subscribe and the topic name that you want to publish into. As well as other parameters like, num of GPU, caffemodel path, camera resolution(your ROS topic resolution), etc.
+Step 7, Now, edit the cpp node file that you want to run. For example, in this file `~/pose_ws/src/rtpose_ros/src/rtpose_node.cpp`, you may need to change the topic name that you want to subscribe and the topic name that you want to publish into. As well as other parameters like, num of GPU, caffemodel path, camera resolution(your ROS topic resolution), etc.
 
 Then `cd ~/pose_ws` and `catkin_make`
 

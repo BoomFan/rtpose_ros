@@ -142,6 +142,7 @@ There is a way to deal with this error, here tells you why：http://blog.csdn.ne
 Basically, is to creat this directory`~/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/proto`, and run the following comands one by one：
 ```
 cd ~/pose_ws/src/rtpose_ros/caffe_rtpose/src/caffe/proto
+protoc --cpp_out=/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/ caffe.proto
 protoc --cpp_out=/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/proto caffe.proto
 ```
 (Please change the path into your catkin workspace if you need to do so.)

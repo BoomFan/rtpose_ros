@@ -133,6 +133,7 @@ In file included from /home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/ca
 核心思想就是要在`~/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe`里面建一个叫做`proto`的文件夹，然后要在这个文件夹里生成`caffe.pb.h`和`caffe.pb.cc`这样的两个文件。简言之：
 ```
 cd ~/pose_ws/src/rtpose_ros/caffe_rtpose/src/caffe/proto
+protoc --cpp_out=/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/ caffe.proto
 protoc --cpp_out=/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/include/caffe/proto caffe.proto
 ```
 请根据自己所需修改catkin workspace路径.

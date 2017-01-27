@@ -114,6 +114,7 @@ const std::string PUBLISH_RET_TOPIC_NAME = "pose_estimate/image";
 
 cv::Mat final_img;
 image_transport::Publisher poseImagePublisher;
+std_msgs::Header header;
 int display_counter = 1;
 double last_pop_time;
 
@@ -1577,7 +1578,9 @@ void* displayFrame(void *i) { //single thread
 }
 
 void publishImgToROS(const cv::Mat wrap_frame)  {
+	ros::Time now = ros::Time::now();
     sensor_msgs::ImagePtr output = cv_bridge::CvImage(std_msgs::Header(), "rgb8", wrap_frame).toImageMsg();
+    output->header.stamp = now;
     poseImagePublisher.publish(output);
 }
 

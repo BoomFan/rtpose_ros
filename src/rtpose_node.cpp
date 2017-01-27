@@ -54,6 +54,8 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/gpu/gpu.hpp>
+#include <std_msgs/String.h>
+#include <sstream>
 
 // Add some CUDA stuff  --Fan Bu
 #include <cuda.h>
@@ -108,16 +110,20 @@ const auto BOX_SIZE = 368;
 const auto BUFFER_SIZE = 4;    //affects latency
 const auto MAX_NUM_PARTS = 70;
 
+// Start ---------- My own define ----------Fan Bu
 //const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_raw";
 const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_rect_color";
-const std::string PUBLISH_RET_TOPIC_NAME = "pose_estimate/image";
+const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/image";
+const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
 
 cv::Mat final_img;
 image_transport::Publisher poseImagePublisher;
 std_msgs::Header header;
+ros::Publisher poseStrPublisher;// Buffer size 1000
+
 int display_counter = 1;
 double last_pop_time;
-
+// End ------------- My own define ---------Fan Bu
 
 // global queues for I/O
 struct Global {
@@ -1669,6 +1675,67 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
                 printf("Published one Image. \n");
             }
 
+            // Now publish the position of each joint.
+            if (1) {
+            	printf("in the loop. \n");
+            double scale = 1.0/frame.scale;
+            const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
+            char fname[256];
+            // if (FLAGS_image_dir.empty()) {
+                // sprintf(fname, "%s/frame%06d.json", FLAGS_write_json.c_str(), frame.video_frame_number);
+            // } else {
+                // boost::filesystem::path p(global.image_list[frame.video_frame_number]);
+                // std::string rawname = p.stem().string();
+
+                // sprintf(fname, "%s/%s.json", FLAGS_write_json.c_str(), rawname.c_str());
+            // }
+            // std::ofstream fs(fname);
+            // fs << "{\n";
+            // fs << "\"version\":0.1,\n";
+            // fs << "\"bodies\":[\n";
+            // for (int ip=0;ip<frame.numPeople;ip++) {
+            //     fs << "{\n" << "\"joints\":" << "[";
+            //     for (int ij=0;ij<num_parts;ij++) {
+            //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
+            //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
+            //         fs << frame.joints[ip*num_parts*3 + ij*3+2];
+            //         if (ij<num_parts-1) fs << ",";
+            //     }
+            //     fs << "]\n";
+            //     fs << "}";
+            //     if (ip<frame.numPeople-1) {
+            //         fs<<",\n";
+            //     }
+            // }
+            // fs << "]\n";
+            // fs << "}\n";
+            // // last_time += get_wall_time()-a;
+
+
+			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME
+            std_msgs::String msg;
+            std::stringstream ss;
+            ss << "\"bodies\":[\n";
+            for (int ip=0;ip<frame.numPeople;ip++) {
+                ss << "{\n" << "\"joints\":" << "[";
+                for (int ij=0;ij<num_parts;ij++) {
+                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
+                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
+                    ss << frame.joints[ip*num_parts*3 + ij*3+2];
+                    if (ij<num_parts-1) ss << ",";
+                }
+                ss << "]\n";
+                ss << "}";
+                if (ip<frame.numPeople-1) {
+                    ss<<",\n";
+                }
+            }
+            ss << "]\n";
+            msg.data = ss.str();
+            poseStrPublisher.publish(msg);// Buffer size was set = 1000
+
+        }
+
             display_counter++;
 
             delete [] frame.data_for_mat;
@@ -2013,7 +2080,8 @@ int main(int argc, char *argv[]) {
     printf("ROS node started\n");
 
     //ROS starts here
-    poseImagePublisher = it.advertise(PUBLISH_RET_TOPIC_NAME, 1);
+    poseImagePublisher = it.advertise(PUBLISH_IMG_TOPIC_NAME, 1);
+    poseStrPublisher = nh.advertise<std_msgs::String>(PUBLISH_STR_TOPIC_NAME,1000);
 
     
     image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);

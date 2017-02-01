@@ -1607,7 +1607,7 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
 
             if (display_counter % 30 == 0) {
                 this_time = get_wall_time();
-                FPS = 1.0f / (this_time - last_pop_time);
+                FPS = 30.0f / (this_time - last_pop_time);
                 global.uistate.fps = FPS;
                 //LOG(ERROR) << frame.cols << "  " << frame.rows;
                 last_time = this_time;
@@ -1625,8 +1625,9 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
                       this_time - frame.buffer_end_time,
                       FPS);
                 LOG(INFO) << msg;
+                last_pop_time = get_wall_time();
             }
-            last_pop_time = get_wall_time();
+            
             if (FLAGS_write_frames.empty()) {
                 snprintf(tmp_str, 256, "%4.1f fps", FPS);
             } else {

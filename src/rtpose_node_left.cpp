@@ -46,6 +46,27 @@
 #include "rtpose/modelDescriptorFactory.h"
 #include "rtpose/renderFunctions.h"
 
+//ROS Includes
+#include <ros/ros.h>
+#include <ros/package.h>
+#include <sensor_msgs/image_encodings.h>
+#include <highgui.h>
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <opencv2/gpu/gpu.hpp>
+#include <std_msgs/String.h>
+#include <sstream>
+
+// Add some CUDA stuff  --Fan Bu
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+// Add libs to publish result into MultiArray
+#include "std_msgs/MultiArrayLayout.h"
+#include "std_msgs/MultiArrayDimension.h"
+#include "std_msgs/Int32MultiArray.h"
+#include "std_msgs/Float32MultiArray.h"
+
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
 DEFINE_int32(part_to_show,          0,              "Part to show from the start.");
@@ -56,15 +77,21 @@ DEFINE_int32(camera,                0,              "The camera index for VideoC
 DEFINE_string(video,                "",             "Use a video file instead of the camera.");
 DEFINE_string(image_dir,            "",             "Process a directory of images.");
 DEFINE_int32(start_frame,           0,              "Skip to frame # of video");
-DEFINE_string(caffemodel, "model/coco/pose_iter_440000.caffemodel", "Caffe model.");
-DEFINE_string(caffeproto, "model/coco/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
+
+DEFINE_string(caffemodel, "/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/model/coco/pose_iter_440000.caffemodel", "Caffe model.");
+DEFINE_string(caffeproto, "/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/model/coco/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
+//DEFINE_string(caffemodel, "model/coco/pose_iter_440000.caffemodel", "Caffe model.");
+//DEFINE_string(caffeproto, "model/coco/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
+// DEFINE_string(caffemodel, "/home/roahm/pose_ws/src/rtpose/caffe_rtpose/model/mpi/pose_iter_160000.caffemodel", "Caffe model.");
+// DEFINE_string(caffeproto, "/home/roahm/pose_ws/src/rtpose/caffe_rtpose/model/mpi/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
 // DEFINE_string(caffemodel, "model/mpi/pose_iter_160000.caffemodel", "Caffe model.");
 // DEFINE_string(caffeproto, "model/mpi/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
 DEFINE_string(resolution,           "1280x720",     "The image resolution (display).");
 DEFINE_string(net_resolution,       "656x368",      "Multiples of 16.");
-DEFINE_string(camera_resolution,    "1280x720",     "Size of the camera frames to ask for.");
+// DEFINE_string(camera_resolution,    "1920x1080",     "Size of the camera frames to ask for.");// For ubs_cam
+DEFINE_string(camera_resolution,    "1280x720",     "Size of the camera frames to ask for.");// For ZED camera
 DEFINE_int32(start_device,          0,              "GPU device start number.");
-DEFINE_int32(num_gpu,               2,              "The number of GPU devices to use.");
+DEFINE_int32(num_gpu,               1,              "The number of GPU devices to use.");
 DEFINE_double(start_scale,          1,              "Initial scale. Must cv::Match net_resolution");
 DEFINE_double(scale_gap,            0.3,            "Scale gap between scales. No effect unless num_scales>1");
 DEFINE_int32(num_scales,            1,              "Number of scales to average");
@@ -89,13 +116,32 @@ const auto BOX_SIZE = 368;
 const auto BUFFER_SIZE = 4;    //affects latency
 const auto MAX_NUM_PARTS = 70;
 
+// Start ---------- My own define ----------Fan Bu
+//const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_raw";
+// const std::string RECEIVE_IMG_TOPIC_NAME = "camera/left/image_rect_color";
+const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
+const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/left/image";
+const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/left/str";
+const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/left/ary";
+
+cv::Mat final_img;
+image_transport::Publisher poseImagePublisher;
+std_msgs::Header header;
+ros::Publisher poseStrPublisher;// Buffer size 1000
+ros::Publisher poseAryPublisher;// To publish estimation array
+
+int display_counter = 1;
+double last_pop_time;
+// End ------------- My own define ---------Fan Bu
 
 // global queues for I/O
 struct Global {
+
     caffe::BlockingQueue<Frame> input_queue; //have to pop
     caffe::BlockingQueue<Frame> output_queue; //have to pop
     caffe::BlockingQueue<Frame> output_queue_ordered;
     caffe::BlockingQueue<Frame> output_queue_mated;
+    caffe::BlockingQueue<Frame> myros_queue;
     std::priority_queue<int, std::vector<int>, std::greater<int> > dropped_index;
     std::vector< std::string > image_list;
     std::mutex mutex;
@@ -207,8 +253,9 @@ void warmup(int device_id) {
     CHECK_LE(net_copies[device_id].nms_num_parts, MAX_NUM_PARTS)
         << "num_parts in NMS layer (" << net_copies[device_id].nms_num_parts << ") "
         << "too big ( MAX_NUM_PARTS )";
-
+// printf("check point 1\n");
     if (net_copies[device_id].nms_num_parts==15) {
+        // printf("check point 1.1\n");
         ModelDescriptorFactory::createModelDescriptor(ModelDescriptorFactory::Type::MPI_15, net_copies[device_id].up_model_descriptor);
         global.nms_threshold = 0.2;
         global.connect_min_subset_cnt = 3;
@@ -217,22 +264,30 @@ void warmup(int device_id) {
         global.connect_inter_min_above_threshold = 8;
         LOG(INFO) << "Selecting MPI model.";
     } else if (net_copies[device_id].nms_num_parts==18) {
+        // printf("check point 1.2\n");
+        printf("device_id is %i \n", device_id);
         ModelDescriptorFactory::createModelDescriptor(ModelDescriptorFactory::Type::COCO_18, net_copies[device_id].up_model_descriptor);
+        // printf("check point 1.2.1\n");
         global.nms_threshold = 0.05;
         global.connect_min_subset_cnt = 3;
         global.connect_min_subset_score = 0.4;
         global.connect_inter_threshold = 0.050;
         global.connect_inter_min_above_threshold = 9;
+        // printf("check point 1.2.2\n");
     } else {
+        // printf("check point 1.3\n");
         CHECK(0) << "Unknown number of parts! Couldn't set model";
     }
-
+// printf("check point 2\n");
     //dry run
     LOG(INFO) << "Dry running...";
     net_copies[device_id].person_net->ForwardFrom(0);
     LOG(INFO) << "Success.";
+    // printf("check point 3\n");
     cudaMalloc(&net_copies[device_id].canvas, DISPLAY_RESOLUTION_WIDTH * DISPLAY_RESOLUTION_HEIGHT * 3 * sizeof(float));
+    // printf("check point 4\n");
     cudaMalloc(&net_copies[device_id].joints, MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float) );
+    // printf("check point 5\n");
 }
 
 void process_and_pad_image(float* target, cv::Mat oriImg, int tw, int th, bool normalize) {
@@ -543,6 +598,83 @@ void* getFrameFromCam(void *i) {
         }
     }
     return nullptr;
+}
+
+void getFrameFromROS(const sensor_msgs::ImageConstPtr& msg) {
+    cv::Mat img;
+    cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
+    printf("Received one new Image.\n");
+    //cv::imwrite("rgb.png", cv_ptr->image);
+    //cv::Mat img = cv_ptr->image;
+    img = cv_ptr->image;
+    double target_frame_time = 0;
+    double target_frame_rate = 0;
+
+    int global_counter = 1;
+    int frame_counter = 0;
+    cv::Mat image_uchar;
+    cv::Mat image_uchar_orig;
+    cv::Mat image_uchar_prev;
+    double last_frame_time = -1;
+
+
+        image_uchar_orig = img;
+
+        image_uchar_prev = image_uchar_orig;
+        frame_counter++;
+
+
+        // TODO: The entire scaling code should be rewritten and better matched
+        // to the imresize_layer. Confusingly, for the demo, there's an intermediate
+        // display resolution to which the original image is resized.
+        double scale = 0;
+        if (image_uchar_orig.cols/(double)image_uchar_orig.rows>DISPLAY_RESOLUTION_WIDTH/(double)DISPLAY_RESOLUTION_HEIGHT) {
+            scale = DISPLAY_RESOLUTION_WIDTH/(double)image_uchar_orig.cols;
+        } else {
+            scale = DISPLAY_RESOLUTION_HEIGHT/(double)image_uchar_orig.rows;
+        }
+        VLOG(4) << "Scale to DISPLAY_RESOLUTION_WIDTH/HEIGHT: " << scale;
+        cv::Mat M = cv::Mat::eye(2,3,CV_64F);
+        M.at<double>(0,0) = scale;
+        M.at<double>(1,1) = scale;
+        warpAffine(image_uchar_orig, image_uchar, M,
+                             cv::Size(DISPLAY_RESOLUTION_WIDTH, DISPLAY_RESOLUTION_HEIGHT),
+                             CV_INTER_CUBIC,
+                             cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+        // resize(image_uchar, image_uchar, Size(new_width, new_height), 0, 0, CV_INTER_CUBIC);
+        image_uchar_prev = image_uchar_orig;
+
+        Frame frame;
+        frame.scale = scale;
+        frame.index = global_counter++;
+        frame.video_frame_number = global.uistate.current_frame;
+        frame.data_for_wrap = new unsigned char [DISPLAY_RESOLUTION_HEIGHT * DISPLAY_RESOLUTION_WIDTH * 3]; //fill after process
+        frame.data_for_mat = new float [DISPLAY_RESOLUTION_HEIGHT * DISPLAY_RESOLUTION_WIDTH * 3];
+        process_and_pad_image(frame.data_for_mat, image_uchar, DISPLAY_RESOLUTION_WIDTH, DISPLAY_RESOLUTION_HEIGHT, 0);
+
+        //pad and transform to float
+        int offset = 3 * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
+        frame.data = new float [BATCH_SIZE * offset];
+        int target_width;
+        int target_height;
+        cv::Mat image_temp;
+        for(int i=0; i < BATCH_SIZE; i++) {
+            float scale = START_SCALE - i*SCALE_GAP;
+            target_width = 16 * ceil(NET_RESOLUTION_WIDTH * scale /16);
+            target_height = 16 * ceil(NET_RESOLUTION_HEIGHT * scale /16);
+
+            CHECK_LE(target_width, NET_RESOLUTION_WIDTH);
+            CHECK_LE(target_height, NET_RESOLUTION_HEIGHT);
+
+            cv::resize(image_uchar, image_temp, cv::Size(target_width, target_height), 0, 0, CV_INTER_AREA);
+            process_and_pad_image(frame.data + i * offset, image_temp, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT, 1);
+        }
+        frame.commit_time = get_wall_time();
+        frame.preprocessed_time = get_wall_time();
+
+        global.input_queue.push(frame);
+
+    // return nullptr;
 }
 
 int connectLimbs(
@@ -1077,8 +1209,12 @@ int connectLimbsCOCO(
 
 void* processFrame(void *i) {
     int tid = *((int *) i);
+    printf("Before warmup(tid);\n");
+    printf("tid is %i \n", tid);
     warmup(tid);
+    printf("Warmed up.;\n");
     LOG(INFO) << "GPU " << tid << " is ready";
+
     Frame frame;
 
     int offset = NET_RESOLUTION_WIDTH * NET_RESOLUTION_HEIGHT * 3;
@@ -1093,9 +1229,11 @@ void* processFrame(void *i) {
     const boost::shared_ptr<caffe::Blob<float>> joints_blob = net_copies[tid].person_net->blob_by_name("joints");
 
     caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copies[tid].person_net->layer_by_name("nms").get();
+    // printf("check point 6\n");
 
     //while(!empty) {
     while(1) {
+
         if (global.quit_threads)
             break;
 
@@ -1122,9 +1260,9 @@ void* processFrame(void *i) {
                     continue;
                 }
                 //double tic1  = get_wall_time();
-
+                // printf("Before cudaMemcpy;\n");
                 cudaMemcpy(net_copies[tid].canvas, frame.data_for_mat, DISPLAY_RESOLUTION_WIDTH * DISPLAY_RESOLUTION_HEIGHT * 3 * sizeof(float), cudaMemcpyHostToDevice);
-
+                // printf("After cudaMemcpy;\n");
                 frame_batch[0] = frame;
                 //LOG(ERROR)<< "Copy data " << index_array[n] << " to device " << tid << ", now size " << global.input_queue.size();
                 float* pointer = net_copies[tid].person_net->blobs()[0]->mutable_gpu_data();
@@ -1138,9 +1276,11 @@ void* processFrame(void *i) {
                 break;
             }
         }
+        // printf("check point 6 looping\n");
         if (valid_data == 0)
             continue;
 
+        // printf("check point 7\n");
         nms_layer->SetThreshold(global.nms_threshold);
         net_copies[tid].person_net->ForwardFrom(0);
         VLOG(2) << "CNN time " << (get_wall_time()-frame.gpu_fetched_time)*1000.0 << " ms.";
@@ -1172,7 +1312,7 @@ void* processFrame(void *i) {
         cudaMemcpy(net_copies[tid].joints, joints,
             MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float),
             cudaMemcpyHostToDevice);
-
+        // printf("check point 8\n");
         if (subset.size() != 0) {
             //LOG(ERROR) << "Rendering";
             render(tid, heatmap_pointer); //only support batch size = 1!!!!
@@ -1199,6 +1339,7 @@ void* processFrame(void *i) {
                 global.output_queue.push(frame_batch[n]);
             }
         }
+        // printf("check point 10\n");
     }
     return nullptr;
 }
@@ -1451,6 +1592,187 @@ void* displayFrame(void *i) { //single thread
     return nullptr;
 }
 
+void publishImgToROS(const cv::Mat wrap_frame)  {
+	ros::Time now = ros::Time::now();
+    sensor_msgs::ImagePtr output = cv_bridge::CvImage(std_msgs::Header(), "rgb8", wrap_frame).toImageMsg();
+    output->header.stamp = now;
+    poseImagePublisher.publish(output);
+}
+
+void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
+    Frame frame;
+    double last_time;
+    double this_time;
+    float FPS;
+    FPS = global.uistate.fps;
+    char tmp_str[256];
+    // std_msgs::Int32MultiArray array;
+    std_msgs::Float32MultiArray array;
+    //Clear array
+    array.data.clear();
+
+            
+        if (global.output_queue_ordered.try_pop(&frame)) {
+            
+            // frame = global.output_queue_ordered.pop();
+            double tic = get_wall_time();
+            cv::Mat wrap_frame(DISPLAY_RESOLUTION_HEIGHT, DISPLAY_RESOLUTION_WIDTH, CV_8UC3, frame.data_for_wrap);
+
+            if (display_counter % 30 == 0) {
+                this_time = get_wall_time();
+                FPS = 30.0f / (this_time - last_pop_time);
+                global.uistate.fps = FPS;
+                //LOG(ERROR) << frame.cols << "  " << frame.rows;
+                last_time = this_time;
+                char msg[1000];
+                sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
+                      frame.index, frame.numPeople,
+                      this_time - frame.commit_time,
+                      frame.preprocessed_time - frame.commit_time,
+                      frame.gpu_fetched_time - frame.preprocessed_time,
+                      frame.gpu_computed_time - frame.gpu_fetched_time,
+                      frame.postprocesse_begin_time - frame.gpu_computed_time,
+                      frame.postprocesse_end_time - frame.postprocesse_begin_time,
+                      frame.buffer_start_time - frame.postprocesse_end_time,
+                      frame.buffer_end_time - frame.buffer_start_time,
+                      this_time - frame.buffer_end_time,
+                      FPS);
+                LOG(INFO) << msg;
+                last_pop_time = get_wall_time();
+            }
+            
+            if (FLAGS_write_frames.empty()) {
+                snprintf(tmp_str, 256, "%4.1f fps", FPS);
+            } else {
+                snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
+            }
+            
+            if (1) {
+            cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
+                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
+
+            snprintf(tmp_str, 256, "%4d", frame.numPeople);
+            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100+2, 35+2),
+                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
+            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100, 35),
+                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
+            }
+            if (global.part_to_show!=0) {
+                if (global.part_to_show-1<=net_copies.at(0).up_model_descriptor->get_number_parts()) {
+                    snprintf(tmp_str, 256, "%10s", net_copies.at(0).up_model_descriptor->get_part_name(global.part_to_show-1).c_str());
+                } else {
+                    int aff_part = ((global.part_to_show-1)-net_copies.at(0).up_model_descriptor->get_number_parts()-1)*2;
+                    if (aff_part==0) {
+                        snprintf(tmp_str, 256, "%10s", "PAFs");
+                    } else {
+                        aff_part = aff_part-2;
+                        aff_part += 1+net_copies.at(0).up_model_descriptor->get_number_parts();
+                        std::string uvname = net_copies.at(0).up_model_descriptor->get_part_name(aff_part);
+                        std::string conn = uvname.substr(0, uvname.find("("));
+                        snprintf(tmp_str, 256, "%10s", conn.c_str());
+                    }
+                }
+                cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+            }
+            if (!FLAGS_video.empty() && FLAGS_write_frames.empty()) {
+                snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
+                // cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
+                //     cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+                cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+            }
+
+            if (!FLAGS_no_display) {
+                // cv::imshow("video", wrap_frame);
+                publishImgToROS(wrap_frame);
+                printf("Published one Image. \n");
+            }
+            
+
+            // Now publish the position of each joint.
+            if (1) {
+            	// printf("in the loop. \n");
+            double scale = 1.0/frame.scale;
+            const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
+            char fname[256];
+            // if (FLAGS_image_dir.empty()) {
+                // sprintf(fname, "%s/frame%06d.json", FLAGS_write_json.c_str(), frame.video_frame_number);
+            // } else {
+                // boost::filesystem::path p(global.image_list[frame.video_frame_number]);
+                // std::string rawname = p.stem().string();
+
+                // sprintf(fname, "%s/%s.json", FLAGS_write_json.c_str(), rawname.c_str());
+            // }
+            // std::ofstream fs(fname);
+            // fs << "{\n";
+            // fs << "\"version\":0.1,\n";
+            // fs << "\"bodies\":[\n";
+            // for (int ip=0;ip<frame.numPeople;ip++) {
+            //     fs << "{\n" << "\"joints\":" << "[";
+            //     for (int ij=0;ij<num_parts;ij++) {
+            //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
+            //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
+            //         fs << frame.joints[ip*num_parts*3 + ij*3+2];
+            //         if (ij<num_parts-1) fs << ",";
+            //     }
+            //     fs << "]\n";
+            //     fs << "}";
+            //     if (ip<frame.numPeople-1) {
+            //         fs<<",\n";
+            //     }
+            // }
+            // fs << "]\n";
+            // fs << "}\n";
+            // // last_time += get_wall_time()-a;
+
+
+			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME
+            std_msgs::String msg;
+            std::stringstream ss;
+            ss << "\"bodies\":[\n";
+            for (int ip=0;ip<frame.numPeople;ip++) {
+                ss << "{\n" << "\"joints\":" << "[";
+                for (int ij=0;ij<num_parts;ij++) {
+                    //for loop, pushing data in the size of the array
+                    array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+0]); // these three lines are used for publishing result into array
+                    array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+1]); // these three lines are used for publishing result into array
+                    array.data.push_back(frame.joints[ip*num_parts*3 + ij*3+2]); // these three lines are used for publishing result into array
+
+
+                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
+                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
+                    ss << frame.joints[ip*num_parts*3 + ij*3+2];
+                    if (ij<num_parts-1) ss << ",";
+                }
+                ss << "]\n";
+                ss << "}";
+                if (ip<frame.numPeople-1) {
+                    ss<<",\n";
+                }
+            }
+            ss << "]\n";
+            msg.data = ss.str();
+            poseStrPublisher.publish(msg);// Buffer size was set = 1000
+            poseAryPublisher.publish(array);
+            
+
+        }
+
+
+            display_counter++;
+
+            delete [] frame.data_for_mat;
+            delete [] frame.data_for_wrap;
+            delete [] frame.data;
+
+            //LOG(ERROR) << msg;
+            int key = cv::waitKey(1);
+            
+            VLOG(2) << "Display time " << (get_wall_time()-tic)*1000.0 << " ms.";
+        }
+}
+
 int rtcpm() {
     const auto timer_begin = std::chrono::high_resolution_clock::now();
 
@@ -1467,33 +1789,33 @@ int rtcpm() {
     }
     LOG(INFO) << "Finish spawning " << NUM_GPU << " threads." << "\n";
 
-    // Setting output resolution
-    if (!FLAGS_no_display) {
-        cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
-        if (FLAGS_fullscreen) {
-            cv::resizeWindow("video", 1920, 1080);
-            cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
-            global.uistate.is_fullscreen = true;
-        } else {
-            cv::resizeWindow("video", DISPLAY_RESOLUTION_WIDTH, DISPLAY_RESOLUTION_HEIGHT);
-            cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_NORMAL);
-            global.uistate.is_fullscreen = false;
-        }
-    }
+    // // Setting output resolution
+    // if (!FLAGS_no_display) {
+    //     cv::namedWindow("video", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+    //     if (FLAGS_fullscreen) {
+    //         cv::resizeWindow("video", 1920, 1080);
+    //         cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
+    //         global.uistate.is_fullscreen = true;
+    //     } else {
+    //         cv::resizeWindow("video", DISPLAY_RESOLUTION_WIDTH, DISPLAY_RESOLUTION_HEIGHT);
+    //         cv::setWindowProperty("video", CV_WND_PROP_FULLSCREEN, CV_WINDOW_NORMAL);
+    //         global.uistate.is_fullscreen = false;
+    //     }
+    // }
 
     // Openning frames producer (e.g. video, webcam) threads
-    usleep(3 * 1e6);
-    int thread_pool_size = 1;
-    pthread_t threads_pool[thread_pool_size];
-    for(int i = 0; i < thread_pool_size; i++) {
-        int *arg = new int[i];
-        int rc = pthread_create(&threads_pool[i], NULL, getFrameFromCam, (void *) arg);
-        if (rc) {
-            LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
-            return -1;
-        }
-    }
-    VLOG(3) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n";
+    // usleep(3 * 1e6);
+    // int thread_pool_size = 1;
+    // pthread_t threads_pool[thread_pool_size];
+    // for(int i = 0; i < thread_pool_size; i++) {
+    //     int *arg = new int[i];
+    //     int rc = pthread_create(&threads_pool[i], NULL, getFrameFromROS, (void *) arg);
+    //     if (rc) {
+    //         LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
+    //         return -1;
+    //     }
+    // }
+    // VLOG(3) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n";
 
     // threads handling outputs
     int thread_pool_size_out = NUM_GPU;
@@ -1519,21 +1841,21 @@ int rtcpm() {
     VLOG(3) << "Finish spawning the thread for ordering. now waiting." << "\n";
 
     // display
-    //pthread_t thread_display;
-    //rc = pthread_create(&thread_display, NULL, displayFrame, (void *) arg);
-    //if (rc) {
-    //    LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
-    //    return -1;
-    //}
-    //VLOG(3) << "Finish spawning the thread for display. now waiting." << "\n";
+    // pthread_t thread_display;
+    // rc = pthread_create(&thread_display, NULL, displayROSFrame, (void *) arg);
+    // if (rc) {
+    //     LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
+    //     return -1;
+    // }
+    // VLOG(3) << "Finish spawning the thread for display. now waiting." << "\n";
 
-    // Joining threads
-    for (int i = 0; i < thread_pool_size; i++) {
-        pthread_join(threads_pool[i], NULL);
-    }
-    for (int i = 0; i < NUM_GPU; i++) {
-        pthread_join(gpu_threads_pool[i], NULL);
-    }
+    // // Joining threads
+    // for (int i = 0; i < thread_pool_size; i++) {
+    //     pthread_join(threads_pool[i], NULL);
+    // }
+    // for (int i = 0; i < NUM_GPU; i++) {
+    //     pthread_join(gpu_threads_pool[i], NULL);
+    // }
 
     LOG(ERROR) << "rtcpm successfully finished.";
 
@@ -1750,26 +2072,50 @@ int readImageDirIfFlagEnabled()
 }
 
 int main(int argc, char *argv[]) {
+    
     // Initializing google logging (Caffe uses it as its logging module)
     google::InitGoogleLogging("rtcpm");
-
+    printf("google::InitGoogleLogging\n");
     // Parsing command line flags
     gflags::ParseCommandLineFlags(&argc, &argv, true);
-
+    printf("gflags::ParseCommandLineFlags\n");
     // Applying user defined configuration and/or default parameter values to global parameters
     auto return_value = setGlobalParametersFromFlags();
     if (return_value != 0)
         return return_value;
-
+    printf("setGlobalParametersFromFlags\n");
     // Configure frames source
     return_value = readImageDirIfFlagEnabled();
     if (return_value != 0)
         return return_value;
+    printf("readImageDirIfFlagEnabled\n");
+
+
 
     // Running rtcpm
     return_value = rtcpm();
     if (return_value != 0)
         return return_value;
+    printf("rtcpm\n");
 
+    ros::init(argc, argv, "ros_rtpose");
+    ros::NodeHandle nh;
+    image_transport::ImageTransport it(nh);
+    printf("ROS node started\n");
+
+    //ROS starts here
+    poseImagePublisher = it.advertise(PUBLISH_IMG_TOPIC_NAME, 1);
+    poseStrPublisher = nh.advertise<std_msgs::String>(PUBLISH_STR_TOPIC_NAME,1000);
+    // poseAryPublisher = nh.advertise<std_msgs::Int32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
+    poseAryPublisher = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
+    
+    
+    image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);
+
+    image_transport::Subscriber sub2 = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, displayROSFrame); //Actually This is used for publish frame
+
+    ros::spin();
+
+    ros::shutdown();
     return return_value;
 }

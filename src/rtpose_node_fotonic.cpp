@@ -67,6 +67,7 @@
 #include "std_msgs/Int32MultiArray.h"
 #include "std_msgs/Float32MultiArray.h"
 
+using namespace std;
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
 DEFINE_int32(part_to_show,          0,              "Part to show from the start.");
@@ -86,10 +87,11 @@ DEFINE_string(caffeproto, "/home/roahm/pose_ws/src/rtpose_ros/caffe_rtpose/model
 // DEFINE_string(caffeproto, "/home/roahm/pose_ws/src/rtpose/caffe_rtpose/model/mpi/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
 // DEFINE_string(caffemodel, "model/mpi/pose_iter_160000.caffemodel", "Caffe model.");
 // DEFINE_string(caffeproto, "model/mpi/pose_deploy_linevec.prototxt", "Caffe deploy prototxt.");
-DEFINE_string(resolution,           "1280x720",     "The image resolution (display).");
-DEFINE_string(net_resolution,       "656x368",      "Multiples of 16.");
+DEFINE_string(resolution,           "160x120",     "The image resolution (display).");
+// DEFINE_string(net_resolution,       "656x368",      "Multiples of 16.");
+DEFINE_string(net_resolution,       "160x128",      "Multiples of 16.");
 // DEFINE_string(camera_resolution,    "1920x1080",     "Size of the camera frames to ask for.");// For ubs_cam
-DEFINE_string(camera_resolution,    "1280x720",     "Size of the camera frames to ask for.");// For ZED camera
+DEFINE_string(camera_resolution,    "160x120",     "Size of the camera frames to ask for.");// For ZED camera
 DEFINE_int32(start_device,          0,              "GPU device start number.");
 DEFINE_int32(num_gpu,               2,              "The number of GPU devices to use.");
 DEFINE_double(start_scale,          1,              "Initial scale. Must cv::Match net_resolution");
@@ -118,8 +120,8 @@ const auto MAX_NUM_PARTS = 70;
 
 // Start ---------- My own define ----------Fan Bu
 //const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_raw";
-const std::string RECEIVE_IMG_TOPIC_NAME = "camera/left/image_rect_color";
-// const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
+// const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_rect_color";
+const std::string RECEIVE_IMG_TOPIC_NAME = "camera/fotonic/image";
 const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/image";
 const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
 const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";
@@ -601,6 +603,8 @@ void* getFrameFromCam(void *i) {
 }
 
 void getFrameFromROS(const sensor_msgs::ImageConstPtr& msg) {
+    double getrostime;
+    getrostime = get_wall_time();
     cv::Mat img;
     cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
     printf("Received one new Image.\n");
@@ -673,6 +677,7 @@ void getFrameFromROS(const sensor_msgs::ImageConstPtr& msg) {
         frame.preprocessed_time = get_wall_time();
 
         global.input_queue.push(frame);
+    cout<< "getFrameFromROS take : " <<get_wall_time()-getrostime<<" seconds"<< endl;
 
     // return nullptr;
 }
@@ -1233,6 +1238,8 @@ void* processFrame(void *i) {
 
     //while(!empty) {
     while(1) {
+        double processFrametime;
+        processFrametime = get_wall_time();
 
         if (global.quit_threads)
             break;
@@ -1340,6 +1347,8 @@ void* processFrame(void *i) {
             }
         }
         // printf("check point 10\n");
+        cout<< "processFrame takes : " <<get_wall_time()-processFrametime<<" seconds"<< endl;
+
     }
     return nullptr;
 }
@@ -1417,6 +1426,8 @@ void* postProcessFrame(void *i) {
     Frame frame;
 
     while(1) {
+        double postProcessFrametime;
+        postProcessFrametime = get_wall_time();
         if (global.quit_threads)
             break;
 
@@ -1436,6 +1447,7 @@ void* postProcessFrame(void *i) {
         }
         frame.postprocesse_end_time = get_wall_time();
         global.output_queue_mated.push(frame);
+        cout<< "postProcessFrame(mat to cv img) takes : " <<get_wall_time()-postProcessFrametime<<" seconds"<< endl;
 
     }
     return nullptr;
@@ -1600,6 +1612,8 @@ void publishImgToROS(const cv::Mat wrap_frame)  {
 }
 
 void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
+    double displayROSFrametime;
+    displayROSFrametime = get_wall_time();
     Frame frame;
     double last_time;
     double this_time;
@@ -1682,13 +1696,13 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
                 cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
                     cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
             }
-
+            cout<< "Adding strings on images takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
             if (!FLAGS_no_display) {
                 // cv::imshow("video", wrap_frame);
                 publishImgToROS(wrap_frame);
                 printf("Published one Image. \n");
             }
-            
+            cout<< "Adding strings and publish images takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
 
             // Now publish the position of each joint.
             if (1) {
@@ -1727,7 +1741,7 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
             // // last_time += get_wall_time()-a;
 
 
-			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME and PUBLISH_ARY_TOPIC_NAME
+			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME
             std_msgs::String msg;
             std::stringstream ss;
             ss << "\"bodies\":[\n";
@@ -1755,6 +1769,7 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
             msg.data = ss.str();
             poseStrPublisher.publish(msg);// Buffer size was set = 1000
             poseAryPublisher.publish(array);
+            cout<< "Adding strings and publish images and arys takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
             
 
         }
@@ -2098,7 +2113,7 @@ int main(int argc, char *argv[]) {
         return return_value;
     printf("rtcpm\n");
 
-    ros::init(argc, argv, "ros_rtpose");
+    ros::init(argc, argv, "ros_rtpose_fotonic");
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
     printf("ROS node started\n");

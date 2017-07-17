@@ -90,8 +90,8 @@ DEFINE_string(resolution,           "1280x720",     "The image resolution (displ
 DEFINE_string(net_resolution,       "656x368",      "Multiples of 16.");
 // DEFINE_string(camera_resolution,    "1920x1080",     "Size of the camera frames to ask for.");// For ubs_cam
 DEFINE_string(camera_resolution,    "1280x720",     "Size of the camera frames to ask for.");// For ZED camera
-DEFINE_int32(start_device,          0,              "GPU device start number.");
-DEFINE_int32(num_gpu,               2,              "The number of GPU devices to use.");
+DEFINE_int32(start_device,          1,              "GPU device start number.");
+DEFINE_int32(num_gpu,               1,              "The number of GPU devices to use.");
 DEFINE_double(start_scale,          1,              "Initial scale. Must cv::Match net_resolution");
 DEFINE_double(scale_gap,            0.3,            "Scale gap between scales. No effect unless num_scales>1");
 DEFINE_int32(num_scales,            1,              "Number of scales to average");
@@ -118,11 +118,11 @@ const auto MAX_NUM_PARTS = 70;
 
 // Start ---------- My own define ----------Fan Bu
 //const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_raw";
-const std::string RECEIVE_IMG_TOPIC_NAME = "camera/left/image_rect_color";
-// const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
-const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/image";
-const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
-const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";
+// const std::string RECEIVE_IMG_TOPIC_NAME = "camera/right/image_rect_color";
+const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
+const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/right/image";
+const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/right/str";
+const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/right/ary";
 
 cv::Mat final_img;
 image_transport::Publisher poseImagePublisher;
@@ -1727,7 +1727,7 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
             // // last_time += get_wall_time()-a;
 
 
-			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME and PUBLISH_ARY_TOPIC_NAME
+			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME
             std_msgs::String msg;
             std::stringstream ss;
             ss << "\"bodies\":[\n";
@@ -2098,7 +2098,7 @@ int main(int argc, char *argv[]) {
         return return_value;
     printf("rtcpm\n");
 
-    ros::init(argc, argv, "ros_rtpose");
+    ros::init(argc, argv, "ros_rtpose_right");
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
     printf("ROS node started\n");

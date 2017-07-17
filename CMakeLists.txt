@@ -275,10 +275,26 @@ link_directories(${CAFFE_LINK_LIBRARAY})
 
 
 add_executable(rtpose_node src/rtpose_node.cpp)
+add_executable(rtpose_node_left src/rtpose_node_left.cpp)
+add_executable(rtpose_node_right src/rtpose_node_right.cpp)
 add_executable(rtpose_node_original_ros src/rtpose_node_original_ros.cpp)
 add_executable(rtpose_node_just_sub src/rtpose_node_just_sub.cpp)
+add_executable(rtpose_node_forecam src/rtpose_node_forecam.cpp)
+add_executable(rtpose_node_fotonic src/rtpose_node_fotonic.cpp)
 target_link_libraries(
         rtpose_node
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+    )
+
+target_link_libraries(
+        rtpose_node_left
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+    )
+
+target_link_libraries(
+        rtpose_node_right
         ${catkin_LIBRARIES}
         ${OpenCV_LIBS}
     )
@@ -295,8 +311,24 @@ target_link_libraries(
         ${catkin_LIBRARIES}
         ${OpenCV_LIBS}
     )
-add_dependencies(rtpose_node rtpose_node_original_ros rtpose_node_just_sub ${PROJECT_NAME}_gencfg)
-ADD_DEPENDENCIES(rtpose_node rtpose_node_original_ros rtpose_node_just_sub Lib)
+
+target_link_libraries(
+        rtpose_node_forecam
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+    )
+
+target_link_libraries(
+        rtpose_node_fotonic
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+    )
+add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic ${PROJECT_NAME}_gencfg)
+ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic Lib)
 target_link_libraries(rtpose_node ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
+target_link_libraries(rtpose_node_left ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
+target_link_libraries(rtpose_node_right ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_node_original_ros ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_node_just_sub ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
+target_link_libraries(rtpose_node_forecam ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
+target_link_libraries(rtpose_node_fotonic ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)

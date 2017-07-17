@@ -118,8 +118,8 @@ const auto MAX_NUM_PARTS = 70;
 
 // Start ---------- My own define ----------Fan Bu
 //const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_raw";
-const std::string RECEIVE_IMG_TOPIC_NAME = "camera/left/image_rect_color";
-// const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
+// const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_rect_color";
+const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
 const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/image";
 const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
 const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";

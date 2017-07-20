@@ -2429,11 +2429,12 @@ int readImageDirIfFlagEnabled()
 void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
     ROS_INFO("Left image has %i people.",detect_result.left_num);
     ROS_INFO("Right image has %i people.",detect_result.right_num);
+    const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
 
     // Camera1 is the left camera, camera2 is thre right camera
-    cv::Mat points1 = cv::Mat(detect_result.left_num,2,CV_64F);
+    cv::Mat points1 = cv::Mat(detect_result.left_num*num_parts, 2, CV_64F);
     ROS_INFO("points1.rows = %i", points1.rows);
-    cv::Mat points2 = cv::Mat(detect_result.right_num,2,CV_64F);
+    cv::Mat points2 = cv::Mat(detect_result.right_num*num_parts, 2, CV_64F);
     std::vector<cv::Vec3f> epilines1, epilines2;
     cv::Mat Fund_matrix = cv::Mat(3,3,CV_64F);
     Fund_matrix.at<double>(0,0) = -9.09430389e-10;
@@ -2447,7 +2448,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
     Fund_matrix.at<double>(2,2) = 0.14064993;
 
     if(detect_result.left_num > 0 && detect_result.right_num > 0){          //Make sure there are people on both images
-        const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
+        
         // Convert left image result to Nx2 matrix: points1
         for (int ip=0; ip<detect_result.left_num; ip++) {
             for (int ij=0;ij<num_parts;ij++) {
@@ -2464,7 +2465,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
         }
         // cv::computeCorrespondEpilines(points1, 1, Fund_matrix, epilines1); //Index starts with 1
         // cv::computeCorrespondEpilines(points2, 2, Fund_matrix, epilines2);
-        
+
         // for all epipolar lines
         // for (vector<cv::Vec3f>::const_iterator it= linesLeft.begin(); it!=linesLeft.end(); ++it) {
 

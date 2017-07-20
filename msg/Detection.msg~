@@ -1,0 +1,7 @@
+# This message type is built for 3d pose reconstruction by running 2d pose estimation in stereo images
+Header header
+int32 left_num
+int32 right_num
+float32[] left_data
+float32[] right_data
+

@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <package>
-  <name>rtpose</name>
+  <name>rtpose_ros</name>
   <version>0.0.0</version>
   <description>The rtpose package</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag --> 
   <!-- Example:  -->
   <!-- <maintainer email="jane.doe@example.com">Jane Doe</maintainer> -->
-  <maintainer email="fanbu@umich.com">This package is used for 2d pose estimation in ROS</maintainer>
+  <maintainer email="fanbu@umich.edu">This package is used for 2d pose estimation in ROS</maintainer>
 
 
   <!-- One license tag required, multiple allowed, one license per tag -->
@@ -48,6 +48,7 @@
   <build_depend>cv_bridge</build_depend>
   <build_depend>rosconsole</build_depend>
   <build_depend>dynamic_reconfigure</build_depend>
+  <build_depend>message_generation</build_depend>
 
 
   <run_depend>roscpp</run_depend>

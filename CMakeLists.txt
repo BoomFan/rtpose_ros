@@ -31,7 +31,7 @@ set(CMAKE_CXX_FLAGS "-lpthread ${CMAKE_CXX_FLAGS}")
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  roscpp roslib std_msgs sensor_msgs image_transport cv_bridge
+  roscpp roslib std_msgs sensor_msgs image_transport cv_bridge genmsg
 )
 
 set(CAFFE_INCLUDEDIR caffe_rtpose/include caffe_rtpose/distribute/include)
@@ -42,57 +42,6 @@ set(CAFFE_LINK_LIBRARAY caffe_rtpose/build/lib)
 ## System dependencies are found with CMake's conventions
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(OpenCV REQUIRED)
-
-###################### Added by Fan Bu ##############################
-FIND_PACKAGE(CUDA REQUIRED)
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  std_msgs
-)
-
-SET(CUDA_NVCC_FLAGS "-arch=sm_13" CACHE STRING "nvcc flags" FORCE)
-SET (CUDA_VERBOSE_BUILD ON CACHE BOOL "nvcc verbose" FORCE)
-SET(LIB_TYPE STATIC) 
-CUDA_ADD_LIBRARY(Lib ${LIB_TYPE} src/rtpose_node.cpp)
-#ADD_LIBRARY(Lib ${LIB_TYPE} src/rtpose_node.cpp)
-
-catkin_package(
-)
-include_directories(
-  ${catkin_INCLUDE_DIRS}
-)
-
-###################### Added by Fan Bu ##############################
-
-##################### OpenCV Packages by Fan Bu #####################
-find_package(catkin REQUIRED COMPONENTS
-  image_transport
-  roscpp
-  rosconsole
-  sensor_msgs
-  cv_bridge
-  dynamic_reconfigure
-)
-catkin_package(
-  CATKIN_DEPENDS
-    roscpp
-    rosconsole
-    sensor_msgs
-    opencv2
-    cv_bridge
-    image_transport
-    dynamic_reconfigure
-)
-include_directories(
-	${catkin_INCLUDE_DIRS} 
-	${OpenCV_INCLUDE_DIRS}
-	${PCL_INCLUDE_DIRS}
-)
-
-link_directories(${OpenCV_LIBRARY_DIRS})
-##################### OpenCV Packages by Fan Bu #####################
-
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -125,11 +74,10 @@ link_directories(${OpenCV_LIBRARY_DIRS})
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  Detection.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -146,10 +94,10 @@ link_directories(${OpenCV_LIBRARY_DIRS})
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   std_msgs  # Or other packages containing msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  std_msgs  # Or other packages containing msgs
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -165,7 +113,64 @@ catkin_package(
 #  LIBRARIES ros_caffe
 #  CATKIN_DEPENDS roscpp
 #  DEPENDS system_lib
+CATKIN_DEPENDS message_runtime
 )
+
+
+###################### Added by Fan Bu ##############################
+FIND_PACKAGE(CUDA REQUIRED)
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  rospy
+  std_msgs
+  message_generation
+)
+
+SET(CUDA_NVCC_FLAGS "-arch=sm_13" CACHE STRING "nvcc flags" FORCE)
+SET (CUDA_VERBOSE_BUILD ON CACHE BOOL "nvcc verbose" FORCE)
+SET(LIB_TYPE STATIC) 
+CUDA_ADD_LIBRARY(Lib ${LIB_TYPE} src/rtpose_node.cpp)
+#ADD_LIBRARY(Lib ${LIB_TYPE} src/rtpose_node.cpp)
+
+catkin_package(
+    CATKIN_DEPENDS
+    message_runtime
+)
+include_directories(
+  ${catkin_INCLUDE_DIRS}
+)
+
+###################### Added by Fan Bu ##############################
+
+##################### OpenCV Packages by Fan Bu #####################
+find_package(catkin REQUIRED COMPONENTS
+  image_transport
+  roscpp
+  rosconsole
+  sensor_msgs
+  cv_bridge
+  dynamic_reconfigure
+)
+catkin_package(
+    CATKIN_DEPENDS
+    roscpp
+    rosconsole
+    sensor_msgs
+    opencv2
+    cv_bridge
+    image_transport
+    dynamic_reconfigure
+    message_runtime
+)
+include_directories(
+	${catkin_INCLUDE_DIRS} 
+	${OpenCV_INCLUDE_DIRS}
+	${PCL_INCLUDE_DIRS}
+)
+
+link_directories(${OpenCV_LIBRARY_DIRS})
+##################### OpenCV Packages by Fan Bu #####################
+
 
 ###########
 ## Build ##
@@ -281,6 +286,7 @@ add_executable(rtpose_node_original_ros src/rtpose_node_original_ros.cpp)
 add_executable(rtpose_node_just_sub src/rtpose_node_just_sub.cpp)
 add_executable(rtpose_node_forecam src/rtpose_node_forecam.cpp)
 add_executable(rtpose_node_fotonic src/rtpose_node_fotonic.cpp)
+add_executable(rtpose_stereo src/rtpose_stereo.cpp)
 target_link_libraries(
         rtpose_node
         ${catkin_LIBRARIES}
@@ -305,7 +311,6 @@ target_link_libraries(
         ${OpenCV_LIBS}
     )
 
-
 target_link_libraries(
         rtpose_node_just_sub
         ${catkin_LIBRARIES}
@@ -323,8 +328,13 @@ target_link_libraries(
         ${catkin_LIBRARIES}
         ${OpenCV_LIBS}
     )
-add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic ${PROJECT_NAME}_gencfg)
-ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic Lib)
+target_link_libraries(
+        rtpose_stereo
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+    )
+add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo ${PROJECT_NAME}_gencfg)
+ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo Lib)
 target_link_libraries(rtpose_node ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_node_left ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_node_right ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
@@ -332,3 +342,4 @@ target_link_libraries(rtpose_node_original_ros ${catkin_LIBRARIES} ${OpenCV_LIBR
 target_link_libraries(rtpose_node_just_sub ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_node_forecam ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_node_fotonic ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
+target_link_libraries(rtpose_stereo ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)

@@ -25,7 +25,7 @@
 #include <gflags/gflags.h>
 #include <google/protobuf/text_format.h>
 #include <opencv2/core/core.hpp>
-// #include <opencv2/contrib/contrib.hpp>
+#include <opencv2/contrib/contrib.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
@@ -54,8 +54,14 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/gpu/gpu.hpp>
+#include <opencv2/calib3d/calib3d.hpp>
 #include <std_msgs/String.h>
 #include <sstream>
+// ROS time_synchronizer for subscribing wultiple topics at the same time
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/CameraInfo.h>
 
 // Add some CUDA stuff  --Fan Bu
 #include <cuda.h>
@@ -66,6 +72,9 @@
 #include "std_msgs/MultiArrayDimension.h"
 #include "std_msgs/Int32MultiArray.h"
 #include "std_msgs/Float32MultiArray.h"
+
+// My own message type
+#include "rtpose_ros/Detection.h"
 
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
@@ -117,21 +126,30 @@ const auto BUFFER_SIZE = 4;    //affects latency
 const auto MAX_NUM_PARTS = 70;
 
 // Start ---------- My own define ----------Fan Bu
-//const std::string RECEIVE_IMG_TOPIC_NAME = "camera/rgb/image_raw";
-const std::string RECEIVE_IMG_TOPIC_NAME = "camera/left/image_rect_color";
-// const std::string RECEIVE_IMG_TOPIC_NAME = "/usb_cam/image_raw";
-const std::string PUBLISH_IMG_TOPIC_NAME = "pose_estimate/image";
-const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
-const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";
+//const std::string RECEIVE_LEFT_IMG_TOPIC_NAME = "camera/rgb/image_raw";
+const std::string RECEIVE_LEFT_IMG_TOPIC_NAME = "camera/left/image_rect_color";
+const std::string RECEIVE_RIGHT_IMG_TOPIC_NAME = "camera/right/image_rect_color";
+// const std::string RECEIVE_LEFT_IMG_TOPIC_NAME = "/usb_cam/image_raw";
+const std::string PUBLISH_LEFT_IMG_TOPIC_NAME = "pose_estimate/image_left";
+const std::string PUBLISH_RIGHT_IMG_TOPIC_NAME = "pose_estimate/image_right";
+// const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
+// const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";
+const std::string PUBLISH_DETECTION_NAME = "pose_estimate/detection";
 
 cv::Mat final_img;
-image_transport::Publisher poseImagePublisher;
+image_transport::Publisher poseLeftImagePublisher;
+image_transport::Publisher poseRightImagePublisher;
 std_msgs::Header header;
-ros::Publisher poseStrPublisher;// Buffer size 1000
-ros::Publisher poseAryPublisher;// To publish estimation array
+// ros::Publisher poseStrPublisher;// Buffer size 1000
+// ros::Publisher poseAryPublisher;// To publish estimation array
+ros::Publisher poseDetectionPublisher;// To publish Detection of stareo images(customized message format)
 
 int display_counter = 1;
 double last_pop_time;
+
+// Flags for stereo processing
+bool left_processing = true;
+bool right_processing = true;
 // End ------------- My own define ---------Fan Bu
 
 // global queues for I/O
@@ -141,7 +159,10 @@ struct Global {
     caffe::BlockingQueue<Frame> output_queue; //have to pop
     caffe::BlockingQueue<Frame> output_queue_ordered;
     caffe::BlockingQueue<Frame> output_queue_mated;
-    caffe::BlockingQueue<Frame> myros_queue;
+    caffe::BlockingQueue<Frame> input_right_queue;              // Added by Fan Bu
+    caffe::BlockingQueue<Frame> output_right_queue;             // Added by Fan Bu
+    caffe::BlockingQueue<Frame> output_right_queue_ordered;     // Added by Fan Bu
+    caffe::BlockingQueue<Frame> output_right_queue_mated;       // Added by Fan Bu
     std::priority_queue<int, std::vector<int>, std::greater<int> > dropped_index;
     std::vector< std::string > image_list;
     std::mutex mutex;
@@ -199,7 +220,7 @@ struct ColumnCompare
 Global global;
 std::vector<NetCopy> net_copies;
 
-int rtcpm();
+int rtcpm_stereo();
 bool handleKey(int c);
 void warmup(int);
 void process_and_pad_image(float* target, cv::Mat oriImg, int tw, int th, bool normalize);
@@ -673,6 +694,103 @@ void getFrameFromROS(const sensor_msgs::ImageConstPtr& msg) {
         frame.preprocessed_time = get_wall_time();
 
         global.input_queue.push(frame);
+
+    // return nullptr;
+}
+
+
+void getStereoFrameFromROS(const sensor_msgs::ImageConstPtr& left_image, const sensor_msgs::ImageConstPtr& right_image) {
+    // ROS_INFO("Now left_processing is: %s ; right_processing is: %s.", left_processing ? "true" : "false", right_processing ? "true" : "false");
+    if (!left_processing && !right_processing){
+        left_processing = true;
+        right_processing = true;
+        cv::Mat img_left;
+        cv::Mat img_right;
+        cv_bridge::CvImagePtr cv_ptr_left = cv_bridge::toCvCopy(left_image, "rgb8");
+        cv_bridge::CvImagePtr cv_ptr_right = cv_bridge::toCvCopy(right_image, "rgb8");
+        ROS_INFO("Received New Stereo Images.");
+        //cv::imwrite("rgb.png", cv_ptr->image);
+        //cv::Mat img = cv_ptr->image;
+        img_left = cv_ptr_left->image;
+        img_right = cv_ptr_right->image;
+        double target_frame_time = 0;
+        double target_frame_rate = 0;
+
+        int global_counter = 1;
+        int frame_counter = 0;
+        cv::Mat image_uchar;
+        cv::Mat image_uchar_orig;
+        cv::Mat image_uchar_prev;
+        double last_frame_time = -1;
+
+        for (int j=0; j < 2; j++){
+            if(j==0){
+                image_uchar_orig = img_left;
+            }
+            else{
+                image_uchar_orig = img_right;
+            }
+
+            image_uchar_prev = image_uchar_orig;
+            frame_counter++;
+
+
+            // TODO: The entire scaling code should be rewritten and better matched
+            // to the imresize_layer. Confusingly, for the demo, there's an intermediate
+            // display resolution to which the original image is resized.
+            double scale = 0;
+            if (image_uchar_orig.cols/(double)image_uchar_orig.rows>DISPLAY_RESOLUTION_WIDTH/(double)DISPLAY_RESOLUTION_HEIGHT) {
+                scale = DISPLAY_RESOLUTION_WIDTH/(double)image_uchar_orig.cols;
+            } else {
+                scale = DISPLAY_RESOLUTION_HEIGHT/(double)image_uchar_orig.rows;
+            }
+            VLOG(4) << "Scale to DISPLAY_RESOLUTION_WIDTH/HEIGHT: " << scale;
+            cv::Mat M = cv::Mat::eye(2,3,CV_64F);
+            M.at<double>(0,0) = scale;
+            M.at<double>(1,1) = scale;
+            warpAffine(image_uchar_orig, image_uchar, M,
+                                 cv::Size(DISPLAY_RESOLUTION_WIDTH, DISPLAY_RESOLUTION_HEIGHT),
+                                 CV_INTER_CUBIC,
+                                 cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+            // resize(image_uchar, image_uchar, Size(new_width, new_height), 0, 0, CV_INTER_CUBIC);
+            image_uchar_prev = image_uchar_orig;
+
+            Frame frame;
+            frame.scale = scale;
+            frame.index = global_counter++;
+            frame.video_frame_number = global.uistate.current_frame;
+            frame.data_for_wrap = new unsigned char [DISPLAY_RESOLUTION_HEIGHT * DISPLAY_RESOLUTION_WIDTH * 3]; //fill after process
+            frame.data_for_mat = new float [DISPLAY_RESOLUTION_HEIGHT * DISPLAY_RESOLUTION_WIDTH * 3];
+            process_and_pad_image(frame.data_for_mat, image_uchar, DISPLAY_RESOLUTION_WIDTH, DISPLAY_RESOLUTION_HEIGHT, 0);
+
+            //pad and transform to float
+            int offset = 3 * NET_RESOLUTION_HEIGHT * NET_RESOLUTION_WIDTH;
+            frame.data = new float [BATCH_SIZE * offset];
+            int target_width;
+            int target_height;
+            cv::Mat image_temp;
+            for(int i=0; i < BATCH_SIZE; i++) {
+                float scale = START_SCALE - i*SCALE_GAP;
+                target_width = 16 * ceil(NET_RESOLUTION_WIDTH * scale /16);
+                target_height = 16 * ceil(NET_RESOLUTION_HEIGHT * scale /16);
+
+                CHECK_LE(target_width, NET_RESOLUTION_WIDTH);
+                CHECK_LE(target_height, NET_RESOLUTION_HEIGHT);
+
+                cv::resize(image_uchar, image_temp, cv::Size(target_width, target_height), 0, 0, CV_INTER_AREA);
+                process_and_pad_image(frame.data + i * offset, image_temp, NET_RESOLUTION_WIDTH, NET_RESOLUTION_HEIGHT, 1);
+            }
+            frame.commit_time = get_wall_time();
+            frame.preprocessed_time = get_wall_time();
+            if(j==0){
+                global.input_queue.push(frame);
+            }
+            else{
+                global.input_right_queue.push(frame);
+            }
+        }
+    }
+    
 
     // return nullptr;
 }
@@ -1207,12 +1325,11 @@ int connectLimbsCOCO(
 }
 
 
-void* processFrame(void *i) {
+void* processLeftFrame(void *i) {
     int tid = *((int *) i);
-    printf("Before warmup(tid);\n");
-    printf("tid is %i \n", tid);
+    ROS_INFO("processLeftFrame tid is %i", tid);
     warmup(tid);
-    printf("Warmed up.;\n");
+    ROS_INFO("processLeftFrame warmed up. left_processing is %s", left_processing ? "true" : "false");
     LOG(INFO) << "GPU " << tid << " is ready";
 
     Frame frame;
@@ -1230,7 +1347,7 @@ void* processFrame(void *i) {
 
     caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copies[tid].person_net->layer_by_name("nms").get();
     // printf("check point 6\n");
-
+    left_processing = false;
     //while(!empty) {
     while(1) {
 
@@ -1339,6 +1456,144 @@ void* processFrame(void *i) {
                 global.output_queue.push(frame_batch[n]);
             }
         }
+        left_processing = false;
+        // printf("check point 10\n");
+    }
+    return nullptr;
+}
+
+void* processRightFrame(void *i) {
+    int tid = *((int *) i);
+    ROS_INFO("processRightFrame tid is %i", tid);
+    warmup(tid);
+    ROS_INFO("processRightFrame warmed up. right_processing is %s", right_processing ? "true" : "false");
+    LOG(INFO) << "GPU " << tid << " is ready";
+
+    Frame frame;
+
+    int offset = NET_RESOLUTION_WIDTH * NET_RESOLUTION_HEIGHT * 3;
+    //bool empty = false;
+
+    Frame frame_batch[BATCH_SIZE];
+
+    std::vector< std::vector<double>> subset;
+    std::vector< std::vector< std::vector<double> > > connection;
+
+    const boost::shared_ptr<caffe::Blob<float>> heatmap_blob = net_copies[tid].person_net->blob_by_name("resized_map");
+    const boost::shared_ptr<caffe::Blob<float>> joints_blob = net_copies[tid].person_net->blob_by_name("joints");
+
+    caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copies[tid].person_net->layer_by_name("nms").get();
+    // printf("check point 6\n");
+    right_processing = false;
+    //while(!empty) {
+    while(1) {
+
+        if (global.quit_threads)
+            break;
+
+        //LOG(ERROR) << "start";
+        int valid_data = 0;
+        //for(int n = 0; n < BATCH_SIZE; n++) {
+        while(valid_data<1) {
+            if (global.input_right_queue.try_pop(&frame)) {
+                //consider dropping it
+                frame.gpu_fetched_time = get_wall_time();
+                double elaspsed_time = frame.gpu_fetched_time - frame.commit_time;
+                //LOG(ERROR) << "frame " << frame.index << " is copied to GPU after " << elaspsed_time << " sec";
+                if (elaspsed_time > 0.1
+                   && !FLAGS_no_frame_drops) {//0.1*BATCH_SIZE) { //0.1*BATCH_SIZE
+                    //drop frame
+                    VLOG(1) << "skip frame " << frame.index;
+                    delete [] frame.data;
+                    delete [] frame.data_for_mat;
+                    delete [] frame.data_for_wrap;
+                    //n--;
+
+                    const std::lock_guard<std::mutex> lock{global.mutex};
+                    global.dropped_index.push(frame.index);
+                    continue;
+                }
+                //double tic1  = get_wall_time();
+                // printf("Before cudaMemcpy;\n");
+                cudaMemcpy(net_copies[tid].canvas, frame.data_for_mat, DISPLAY_RESOLUTION_WIDTH * DISPLAY_RESOLUTION_HEIGHT * 3 * sizeof(float), cudaMemcpyHostToDevice);
+                // printf("After cudaMemcpy;\n");
+                frame_batch[0] = frame;
+                //LOG(ERROR)<< "Copy data " << index_array[n] << " to device " << tid << ", now size " << global.input_queue.size();
+                float* pointer = net_copies[tid].person_net->blobs()[0]->mutable_gpu_data();
+
+                cudaMemcpy(pointer + 0 * offset, frame_batch[0].data, BATCH_SIZE * offset * sizeof(float), cudaMemcpyHostToDevice);
+                valid_data++;
+                //VLOG(2) << "Host->device " << (get_wall_time()-tic1)*1000.0 << " ms.";
+            }
+            else {
+                //empty = true;
+                break;
+            }
+        }
+        // printf("check point 6 looping\n");
+        if (valid_data == 0)
+            continue;
+
+        // printf("check point 7\n");
+        nms_layer->SetThreshold(global.nms_threshold);
+        net_copies[tid].person_net->ForwardFrom(0);
+        VLOG(2) << "CNN time " << (get_wall_time()-frame.gpu_fetched_time)*1000.0 << " ms.";
+        //cudaDeviceSynchronize();
+        float* heatmap_pointer = heatmap_blob->mutable_cpu_data();
+        const float* peaks = joints_blob->mutable_cpu_data();
+
+        float joints[MAX_NUM_PARTS*3*MAX_PEOPLE]; //10*15*3
+
+        int cnt = 0;
+        // CHECK_EQ(net_copies[tid].nms_num_parts, 15);
+        double tic = get_wall_time();
+        const int num_parts = net_copies[tid].nms_num_parts;
+        if (net_copies[tid].nms_num_parts==15) {
+            cnt = connectLimbs(subset, connection,
+                                                 heatmap_pointer, peaks,
+                                                 net_copies[tid].nms_max_peaks, joints, net_copies[tid].up_model_descriptor.get());
+        } else {
+            cnt = connectLimbsCOCO(subset, connection,
+                                                 heatmap_pointer, peaks,
+                                                 net_copies[tid].nms_max_peaks, joints, net_copies[tid].up_model_descriptor.get());
+        }
+
+        VLOG(2) << "CNT: " << cnt << " Connect time " << (get_wall_time()-tic)*1000.0 << " ms.";
+        net_copies[tid].num_people[0] = cnt;
+        VLOG(2) << "num_people[i] = " << cnt;
+
+
+        cudaMemcpy(net_copies[tid].joints, joints,
+            MAX_NUM_PARTS*3*MAX_PEOPLE * sizeof(float),
+            cudaMemcpyHostToDevice);
+        // printf("check point 8\n");
+        if (subset.size() != 0) {
+            //LOG(ERROR) << "Rendering";
+            render(tid, heatmap_pointer); //only support batch size = 1!!!!
+            for(int n = 0; n < valid_data; n++) {
+                frame_batch[n].numPeople = net_copies[tid].num_people[n];
+                frame_batch[n].gpu_computed_time = get_wall_time();
+                frame_batch[n].joints = boost::shared_ptr<float[]>(new float[frame_batch[n].numPeople*MAX_NUM_PARTS*3]);
+                for (int ij=0;ij<frame_batch[n].numPeople*num_parts*3;ij++) {
+                    frame_batch[n].joints[ij] = joints[ij];
+                }
+
+
+                cudaMemcpy(frame_batch[n].data_for_mat, net_copies[tid].canvas, DISPLAY_RESOLUTION_HEIGHT * DISPLAY_RESOLUTION_WIDTH * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+                global.output_right_queue.push(frame_batch[n]);
+            }
+        }
+        else {
+            render(tid, heatmap_pointer);
+            //frame_batch[n].data should revert to 0-255
+            for(int n = 0; n < valid_data; n++) {
+                frame_batch[n].numPeople = 0;
+                frame_batch[n].gpu_computed_time = get_wall_time();
+                cudaMemcpy(frame_batch[n].data_for_mat, net_copies[tid].canvas, DISPLAY_RESOLUTION_HEIGHT * DISPLAY_RESOLUTION_WIDTH * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+                global.output_right_queue.push(frame_batch[n]);
+            }
+        }
+        right_processing = false;
         // printf("check point 10\n");
     }
     return nullptr;
@@ -1351,7 +1606,7 @@ public:
     }
 };
 
-void* buffer_and_order(void* threadargs) { //only one thread can execute this
+void* buffer_and_order_left(void* threadargs) { //only one thread can execute this
     FrameCompare comp;
     std::priority_queue<Frame, std::vector<Frame>, FrameCompare> buffer(comp);
     Frame frame;
@@ -1363,47 +1618,8 @@ void* buffer_and_order(void* threadargs) { //only one thread can execute this
         bool success = global.output_queue_mated.try_pop(&frame);
         frame.buffer_start_time = get_wall_time();
         if (success) {
-            VLOG(4) << "buffer getting " << frame.index << ", waiting for " << frame_waited;
-            std::unique_lock<std::mutex> lock{global.mutex};
-            while(global.dropped_index.size()!=0 && global.dropped_index.top() == frame_waited) {
-                frame_waited++;
-                global.dropped_index.pop();
-            }
-            lock.unlock();
-            //LOG(ERROR) << "while end";
-
-            if (frame.index == frame_waited) { //if this is the frame we want, just push it
-                frame.buffer_end_time = get_wall_time();
-                global.output_queue_ordered.push(frame);
-                frame_waited++;
-                while(buffer.size() != 0 && buffer.top().index == frame_waited) {
-                    Frame next = buffer.top();
-                    buffer.pop();
-                    next.buffer_end_time = get_wall_time();
-                    global.output_queue_ordered.push(next);
-                    frame_waited++;
-                }
-            }
-            else {
-                buffer.push(frame);
-            }
-
-            if (buffer.size() > BUFFER_SIZE) {
-                //LOG(ERROR) << "buffer squeezed";
-                Frame extra = buffer.top();
-                buffer.pop();
-                //LOG(ERROR) << "popping " << get<0>(extra);
-                extra.buffer_end_time = get_wall_time();
-                global.output_queue_ordered.push(extra);
-                frame_waited = extra.index + 1;
-                while(buffer.size() != 0 && buffer.top().index == frame_waited) {
-                    Frame next = buffer.top();
-                    buffer.pop();
-                    next.buffer_end_time = get_wall_time();
-                    global.output_queue_ordered.push(next);
-                    frame_waited++;
-                }
-            }
+            frame.buffer_end_time = get_wall_time();
+            global.output_queue_ordered.push(frame);
         }
         else {
             //output_queue
@@ -1412,7 +1628,29 @@ void* buffer_and_order(void* threadargs) { //only one thread can execute this
     return nullptr;
 }
 
-void* postProcessFrame(void *i) {
+void* buffer_and_order_right(void* threadargs) { //only one thread can execute this
+    FrameCompare comp;
+    std::priority_queue<Frame, std::vector<Frame>, FrameCompare> buffer(comp);
+    Frame frame;
+
+    int frame_waited = 1;
+    while(1) {
+        if (global.quit_threads)
+            break;
+        bool success = global.output_right_queue_mated.try_pop(&frame);
+        frame.buffer_start_time = get_wall_time();
+        if (success) {
+            frame.buffer_end_time = get_wall_time();
+            global.output_right_queue_ordered.push(frame);
+        }
+        else {
+            //output_queue
+        }
+    }
+    return nullptr;
+}
+
+void* postProcessLeftFrame(void *i) {
     //int tid = *((int *) i);
     Frame frame;
 
@@ -1436,6 +1674,35 @@ void* postProcessFrame(void *i) {
         }
         frame.postprocesse_end_time = get_wall_time();
         global.output_queue_mated.push(frame);
+
+    }
+    return nullptr;
+}
+
+void* postProcessRightFrame(void *i) {
+    //int tid = *((int *) i);
+    Frame frame;
+
+    while(1) {
+        if (global.quit_threads)
+            break;
+
+        frame = global.output_right_queue.pop();
+        frame.postprocesse_begin_time = get_wall_time();
+
+        //Mat visualize(NET_RESOLUTION_HEIGHT, NET_RESOLUTION_WIDTH, CV_8UC3);
+        int offset = DISPLAY_RESOLUTION_WIDTH * DISPLAY_RESOLUTION_HEIGHT;
+        for(int c = 0; c < 3; c++) {
+            for(int i = 0; i < DISPLAY_RESOLUTION_HEIGHT; i++) {
+                for(int j = 0; j < DISPLAY_RESOLUTION_WIDTH; j++) {
+                    int value = int(frame.data_for_mat[c*offset + i*DISPLAY_RESOLUTION_WIDTH + j] + 0.5);
+                    value = value<0 ? 0 : (value > 255 ? 255 : value);
+                    frame.data_for_wrap[3*(i*DISPLAY_RESOLUTION_WIDTH + j) + c] = (unsigned char)(value);
+                }
+            }
+        }
+        frame.postprocesse_end_time = get_wall_time();
+        global.output_right_queue_mated.push(frame);
 
     }
     return nullptr;
@@ -1592,15 +1859,19 @@ void* displayFrame(void *i) { //single thread
     return nullptr;
 }
 
-void publishImgToROS(const cv::Mat wrap_frame)  {
-	ros::Time now = ros::Time::now();
-    sensor_msgs::ImagePtr output = cv_bridge::CvImage(std_msgs::Header(), "rgb8", wrap_frame).toImageMsg();
-    output->header.stamp = now;
-    poseImagePublisher.publish(output);
+void publishStereoImgToROS(const cv::Mat wrap_frame_left, const cv::Mat wrap_frame_right)  {
+    sensor_msgs::ImagePtr output_left = cv_bridge::CvImage(std_msgs::Header(), "rgb8", wrap_frame_left).toImageMsg();
+    sensor_msgs::ImagePtr output_right = cv_bridge::CvImage(std_msgs::Header(), "rgb8", wrap_frame_right).toImageMsg();
+    ros::Time now = ros::Time::now();
+    output_left->header.stamp = now;
+    output_right->header.stamp = now;
+    poseLeftImagePublisher.publish(output_left);
+    poseRightImagePublisher.publish(output_right);
 }
 
-void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
+void displayROSFrameStereo(const sensor_msgs::ImageConstPtr& msg) { //single thread
     Frame frame;
+    Frame frame_right;
     double last_time;
     double this_time;
     float FPS;
@@ -1611,87 +1882,104 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
     //Clear array
     array.data.clear();
 
-            
-        if (global.output_queue_ordered.try_pop(&frame)) {
-            
-            // frame = global.output_queue_ordered.pop();
-            double tic = get_wall_time();
-            cv::Mat wrap_frame(DISPLAY_RESOLUTION_HEIGHT, DISPLAY_RESOLUTION_WIDTH, CV_8UC3, frame.data_for_wrap);
 
-            if (display_counter % 30 == 0) {
-                this_time = get_wall_time();
-                FPS = 30.0f / (this_time - last_pop_time);
-                global.uistate.fps = FPS;
-                //LOG(ERROR) << frame.cols << "  " << frame.rows;
-                last_time = this_time;
-                char msg[1000];
-                sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
-                      frame.index, frame.numPeople,
-                      this_time - frame.commit_time,
-                      frame.preprocessed_time - frame.commit_time,
-                      frame.gpu_fetched_time - frame.preprocessed_time,
-                      frame.gpu_computed_time - frame.gpu_fetched_time,
-                      frame.postprocesse_begin_time - frame.gpu_computed_time,
-                      frame.postprocesse_end_time - frame.postprocesse_begin_time,
-                      frame.buffer_start_time - frame.postprocesse_end_time,
-                      frame.buffer_end_time - frame.buffer_start_time,
-                      this_time - frame.buffer_end_time,
-                      FPS);
-                LOG(INFO) << msg;
-                last_pop_time = get_wall_time();
-            }
-            
-            if (FLAGS_write_frames.empty()) {
-                snprintf(tmp_str, 256, "%4.1f fps", FPS);
+    if (global.output_queue_ordered.size()>0 && global.output_right_queue_ordered.size()>0) {
+        // ROS_INFO("Left queue size: %lu", global.output_queue_ordered.size());
+        // ROS_INFO("Right queue size: %lu", global.output_right_queue_ordered.size());
+        // global.output_queue_ordered.try_pop(&frame)
+        frame = global.output_queue_ordered.pop();
+        frame_right = global.output_right_queue_ordered.pop();
+        double tic = get_wall_time();
+        cv::Mat wrap_frame(DISPLAY_RESOLUTION_HEIGHT, DISPLAY_RESOLUTION_WIDTH, CV_8UC3, frame.data_for_wrap);
+        cv::Mat wrap_frame_right(DISPLAY_RESOLUTION_HEIGHT, DISPLAY_RESOLUTION_WIDTH, CV_8UC3, frame_right.data_for_wrap);
+
+        if (display_counter % 30 == 0) {
+            this_time = get_wall_time();
+            FPS = 30.0f / (this_time - last_pop_time);
+            global.uistate.fps = FPS;
+            //LOG(ERROR) << frame.cols << "  " << frame.rows;
+            last_time = this_time;
+            char msg[1000];
+            sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
+                  frame.index, frame.numPeople,
+                  this_time - frame.commit_time,
+                  frame.preprocessed_time - frame.commit_time,
+                  frame.gpu_fetched_time - frame.preprocessed_time,
+                  frame.gpu_computed_time - frame.gpu_fetched_time,
+                  frame.postprocesse_begin_time - frame.gpu_computed_time,
+                  frame.postprocesse_end_time - frame.postprocesse_begin_time,
+                  frame.buffer_start_time - frame.postprocesse_end_time,
+                  frame.buffer_end_time - frame.buffer_start_time,
+                  this_time - frame.buffer_end_time,
+                  FPS);
+            LOG(INFO) << msg;
+            last_pop_time = get_wall_time();
+        }
+        
+        if (FLAGS_write_frames.empty()) {
+            snprintf(tmp_str, 256, "%4.1f fps", FPS);
+        } else {
+            snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
+        }
+        
+        // Print FPS and NumOfPeople on the images
+        if (1) {
+        cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
+        cv::putText(wrap_frame_right, tmp_str, cv::Point(25,35),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
+
+        snprintf(tmp_str, 256, "%4d", frame.numPeople);
+        cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100+2, 35+2),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
+        cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100, 35),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
+        snprintf(tmp_str, 256, "%4d", frame_right.numPeople);
+        cv::putText(wrap_frame_right, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100+2, 35+2),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
+        cv::putText(wrap_frame_right, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100, 35),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
+        }
+
+        if (global.part_to_show!=0) {
+            if (global.part_to_show-1<=net_copies.at(0).up_model_descriptor->get_number_parts()) {
+                snprintf(tmp_str, 256, "%10s", net_copies.at(0).up_model_descriptor->get_part_name(global.part_to_show-1).c_str());
             } else {
-                snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
-            }
-            
-            if (1) {
-            cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
-
-            snprintf(tmp_str, 256, "%4d", frame.numPeople);
-            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100+2, 35+2),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
-            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100, 35),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
-            }
-            if (global.part_to_show!=0) {
-                if (global.part_to_show-1<=net_copies.at(0).up_model_descriptor->get_number_parts()) {
-                    snprintf(tmp_str, 256, "%10s", net_copies.at(0).up_model_descriptor->get_part_name(global.part_to_show-1).c_str());
+                int aff_part = ((global.part_to_show-1)-net_copies.at(0).up_model_descriptor->get_number_parts()-1)*2;
+                if (aff_part==0) {
+                    snprintf(tmp_str, 256, "%10s", "PAFs");
                 } else {
-                    int aff_part = ((global.part_to_show-1)-net_copies.at(0).up_model_descriptor->get_number_parts()-1)*2;
-                    if (aff_part==0) {
-                        snprintf(tmp_str, 256, "%10s", "PAFs");
-                    } else {
-                        aff_part = aff_part-2;
-                        aff_part += 1+net_copies.at(0).up_model_descriptor->get_number_parts();
-                        std::string uvname = net_copies.at(0).up_model_descriptor->get_part_name(aff_part);
-                        std::string conn = uvname.substr(0, uvname.find("("));
-                        snprintf(tmp_str, 256, "%10s", conn.c_str());
-                    }
+                    aff_part = aff_part-2;
+                    aff_part += 1+net_copies.at(0).up_model_descriptor->get_number_parts();
+                    std::string uvname = net_copies.at(0).up_model_descriptor->get_part_name(aff_part);
+                    std::string conn = uvname.substr(0, uvname.find("("));
+                    snprintf(tmp_str, 256, "%10s", conn.c_str());
                 }
-                cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
             }
-            if (!FLAGS_video.empty() && FLAGS_write_frames.empty()) {
-                snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
-                // cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
-                //     cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
-                cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
-            }
+            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+            cv::putText(wrap_frame_right, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+        }
+        if (!FLAGS_video.empty() && FLAGS_write_frames.empty()) {
+            snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
+            // cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
+            //     cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+            cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
+                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+            cv::putText(wrap_frame_right, tmp_str, cv::Point(25,55),
+                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+        }
 
-            if (!FLAGS_no_display) {
-                // cv::imshow("video", wrap_frame);
-                publishImgToROS(wrap_frame);
-                printf("Published one Image. \n");
-            }
-            
+        if (!FLAGS_no_display) {
+            // cv::imshow("video", wrap_frame);
+            publishStereoImgToROS(wrap_frame, wrap_frame_right);
+            ROS_INFO("Published one pair of images.");
+        }
+        
 
-            // Now publish the position of each joint.
-            if (1) {
+        // Now publish the position of each joint.
+        if (1) {
             	// printf("in the loop. \n");
             double scale = 1.0/frame.scale;
             const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
@@ -1727,65 +2015,92 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
             // // last_time += get_wall_time()-a;
 
 
-			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME and PUBLISH_ARY_TOPIC_NAME
-            std_msgs::String msg;
-            std::stringstream ss;
-            ss << "\"bodies\":[\n";
+    		//Publish the joint of each people in both image into ROS topic PUBLISH_DETECTION_NAME
+            rtpose_ros::Detection detect_result;
+            // Write left image result into detect_result
             for (int ip=0;ip<frame.numPeople;ip++) {
-                ss << "{\n" << "\"joints\":" << "[";
                 for (int ij=0;ij<num_parts;ij++) {
                     //for loop, pushing data in the size of the array
-                    array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+0]); // these three lines are used for publishing result into array
-                    array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+1]); // these three lines are used for publishing result into array
-                    array.data.push_back(frame.joints[ip*num_parts*3 + ij*3+2]); // these three lines are used for publishing result into array
-
-
-                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
-                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
-                    ss << frame.joints[ip*num_parts*3 + ij*3+2];
-                    if (ij<num_parts-1) ss << ",";
-                }
-                ss << "]\n";
-                ss << "}";
-                if (ip<frame.numPeople-1) {
-                    ss<<",\n";
+                    detect_result.left_data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+0]);     // these three lines are used for publishing result into array, x pixel 
+                    detect_result.left_data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+1]);     // these three lines are used for publishing result into array, y pixel 
+                    detect_result.left_data.push_back(frame.joints[ip*num_parts*3 + ij*3+2]);           // these three lines are used for publishing result into array, confidence 
                 }
             }
-            ss << "]\n";
-            msg.data = ss.str();
-            poseStrPublisher.publish(msg);// Buffer size was set = 1000
-            poseAryPublisher.publish(array);
-            
+            detect_result.left_num = frame.numPeople;
+            // Write right image result into detect_result
+            for (int ip=0;ip<frame_right.numPeople;ip++) {
+                for (int ij=0;ij<num_parts;ij++) {
+                    //for loop, pushing data in the size of the array
+                    detect_result.right_data.push_back(scale*frame_right.joints[ip*num_parts*3 + ij*3+0]);     // these three lines are used for publishing result into array, x pixel 
+                    detect_result.right_data.push_back(scale*frame_right.joints[ip*num_parts*3 + ij*3+1]);     // these three lines are used for publishing result into array, y pixel 
+                    detect_result.right_data.push_back(frame_right.joints[ip*num_parts*3 + ij*3+2]);           // these three lines are used for publishing result into array, confidence 
+                }
+            }
+            detect_result.right_num = frame_right.numPeople;
 
+            ros::Time now = ros::Time::now();
+            detect_result.header.stamp = now;
+            detect_result.header.frame_id = "zed_frame";
+            poseDetectionPublisher.publish(detect_result);
         }
 
 
-            display_counter++;
+        display_counter++;
 
-            delete [] frame.data_for_mat;
-            delete [] frame.data_for_wrap;
-            delete [] frame.data;
+        delete [] frame.data_for_mat;
+        delete [] frame.data_for_wrap;
+        delete [] frame.data;
+        delete [] frame_right.data_for_mat;
+        delete [] frame_right.data_for_wrap;
+        delete [] frame_right.data;
 
-            //LOG(ERROR) << msg;
-            int key = cv::waitKey(1);
-            
-            VLOG(2) << "Display time " << (get_wall_time()-tic)*1000.0 << " ms.";
-        }
+        //LOG(ERROR) << msg;
+        int key = cv::waitKey(1);
+        
+        VLOG(2) << "Display time " << (get_wall_time()-tic)*1000.0 << " ms.";
+    }
 }
 
-int rtcpm() {
+int rtcpm_stereo() {
     const auto timer_begin = std::chrono::high_resolution_clock::now();
 
-    // Opening processing deep net threads
+    // // Opening processing deep net threads
+    // pthread_t gpu_threads_pool[NUM_GPU];
+    // for(int gpu = 0; gpu < NUM_GPU; gpu++) {
+    //     int *arg = new int[1];
+    //     *arg = gpu+FLAGS_start_device;
+    //     int rc = pthread_create(&gpu_threads_pool[gpu], NULL, processFrame, (void *) arg);
+    //     if (rc) {
+    //         LOG(ERROR) << "Error:unable to create thread," << rc << "\n";
+    //         return -1;
+    //     }
+    // }
+    // LOG(INFO) << "Finish spawning " << NUM_GPU << " threads." << "\n";
+    NUM_GPU = 2;
+    // Opening processing deep net threads for left images
     pthread_t gpu_threads_pool[NUM_GPU];
-    for(int gpu = 0; gpu < NUM_GPU; gpu++) {
+    for(int gpu = 0; gpu < (NUM_GPU/2); gpu++) {
         int *arg = new int[1];
         *arg = gpu+FLAGS_start_device;
-        int rc = pthread_create(&gpu_threads_pool[gpu], NULL, processFrame, (void *) arg);
+        int rc = pthread_create(&gpu_threads_pool[gpu], NULL, processLeftFrame, (void *) arg);
         if (rc) {
-            LOG(ERROR) << "Error:unable to create thread," << rc << "\n";
+            LOG(ERROR) << "Error:unable to create thread for left images," << rc << "\n";
             return -1;
         }
+        left_processing = false;
+    }
+    LOG(INFO) << "Finish spawning " << NUM_GPU << " threads." << "\n";
+    // Opening processing deep net threads for right images
+    // pthread_t gpu_threads_pool[NUM_GPU];
+    for(int gpu = 1; gpu < NUM_GPU; gpu++) {
+        int *arg = new int[1];
+        *arg = gpu+FLAGS_start_device;
+        int rc = pthread_create(&gpu_threads_pool[gpu], NULL, processRightFrame, (void *) arg);
+        if (rc) {
+            LOG(ERROR) << "Error:unable to create thread for right images," << rc << "\n";
+            return -1;
+        }
+        right_processing = false;
     }
     LOG(INFO) << "Finish spawning " << NUM_GPU << " threads." << "\n";
 
@@ -1817,28 +2132,67 @@ int rtcpm() {
     // }
     // VLOG(3) << "Finish spawning " << thread_pool_size << " threads. now waiting." << "\n";
 
-    // threads handling outputs
-    int thread_pool_size_out = NUM_GPU;
+    // // threads handling outputs
+    // int thread_pool_size_out = NUM_GPU;
+    // pthread_t threads_pool_out[thread_pool_size_out];
+    // for(int i = 0; i < thread_pool_size_out; i++) {
+    //     int *arg = new int[i];
+    //     int rc = pthread_create(&threads_pool_out[i], NULL, postProcessFrame, (void *) arg);
+    //     if (rc) {
+    //         LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
+    //         return -1;
+    //     }
+    // }
+    // VLOG(3) << "Finish spawning " << thread_pool_size_out << " threads. now waiting." << "\n";
+
+    // threads handling outputs for left images
+    int thread_pool_size_out = NUM_GPU-1;
     pthread_t threads_pool_out[thread_pool_size_out];
     for(int i = 0; i < thread_pool_size_out; i++) {
         int *arg = new int[i];
-        int rc = pthread_create(&threads_pool_out[i], NULL, postProcessFrame, (void *) arg);
+        int rc = pthread_create(&threads_pool_out[i], NULL, postProcessLeftFrame, (void *) arg);
         if (rc) {
-            LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
+            LOG(ERROR) << "Error: unable to create thread for left images," << rc << "\n";
             return -1;
         }
     }
     VLOG(3) << "Finish spawning " << thread_pool_size_out << " threads. now waiting." << "\n";
 
+    // threads handling outputs for right images
+    thread_pool_size_out = NUM_GPU;
+    // pthread_t threads_pool_out[thread_pool_size_out];
+    for(int i = 1; i < thread_pool_size_out; i++) {
+        int *arg = new int[i];
+        int rc = pthread_create(&threads_pool_out[i], NULL, postProcessRightFrame, (void *) arg);
+        if (rc) {
+            LOG(ERROR) << "Error: unable to create thread for right images," << rc << "\n";
+            return -1;
+        }
+    }
+    VLOG(3) << "Finish spawning " << thread_pool_size_out << " threads. now waiting." << "\n";
+
+
+
     // thread for buffer and ordering frame
-    pthread_t threads_order;
+    int buffer_num = 2;
+    pthread_t threads_order[buffer_num];
     int *arg = new int[1];
-    int rc = pthread_create(&threads_order, NULL, buffer_and_order, (void *) arg);
+    int rc = pthread_create(&threads_order[0], NULL, buffer_and_order_left, (void *) arg);
     if (rc) {
-        LOG(ERROR) << "Error: unable to create thread," << rc << "\n";
+        LOG(ERROR) << "Error: unable to create thread for left buffer_and_order," << rc << "\n";
         return -1;
     }
-    VLOG(3) << "Finish spawning the thread for ordering. now waiting." << "\n";
+    VLOG(3) << "Finish spawning the thread for left images ordering. now waiting." << "\n";
+
+    // thread for buffer and ordering frame
+    // pthread_t threads_order;
+    arg = new int[1];
+    rc = pthread_create(&threads_order[1], NULL, buffer_and_order_right, (void *) arg);
+    if (rc) {
+        LOG(ERROR) << "Error: unable to create thread for right buffer_and_order," << rc << "\n";
+        return -1;
+    }
+    VLOG(3) << "Finish spawning the thread for right images ordering. now waiting." << "\n";
 
     // display
     // pthread_t thread_display;
@@ -1857,10 +2211,11 @@ int rtcpm() {
     //     pthread_join(gpu_threads_pool[i], NULL);
     // }
 
-    LOG(ERROR) << "rtcpm successfully finished.";
+    ROS_INFO("All rtcpm_stereo threads successfully created.");
 
     const auto total_time_sec = (double)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-timer_begin).count() * 1e-9;
-    LOG(ERROR) << "Total time: " << total_time_sec << " seconds.";
+    // LOG(ERROR) << "Total time: " << total_time_sec << " seconds.";
+    ROS_INFO("Creating threads time: %f seconds.", total_time_sec);
 
     return 0;
 }
@@ -2071,49 +2426,107 @@ int readImageDirIfFlagEnabled()
     return 0;
 }
 
+void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
+    ROS_INFO("Left image has %i people.",detect_result.left_num);
+    ROS_INFO("Right image has %i people.",detect_result.right_num);
+
+    // Camera1 is the left camera, camera2 is thre right camera
+    cv::Mat points1 = cv::Mat(detect_result.left_num,2,CV_64F);
+    ROS_INFO("points1.rows = %i", points1.rows);
+    cv::Mat points2 = cv::Mat(detect_result.right_num,2,CV_64F);
+    std::vector<cv::Vec3f> epilines1, epilines2;
+    cv::Mat Fund_matrix = cv::Mat(3,3,CV_64F);
+    Fund_matrix.at<double>(0,0) = -9.09430389e-10;
+    Fund_matrix.at<double>(0,1) = 2.70030811e-06;
+    Fund_matrix.at<double>(0,2) = -9.16306854e-04;
+    Fund_matrix.at<double>(1,0) = -1.82561938e-06;
+    Fund_matrix.at<double>(1,1) = 3.75124867e-07;
+    Fund_matrix.at<double>(1,2) = 0.18062506;
+    Fund_matrix.at<double>(2,0) = 6.80660378e-04;
+    Fund_matrix.at<double>(2,1) = -0.18121823;
+    Fund_matrix.at<double>(2,2) = 0.14064993;
+
+    if(detect_result.left_num > 0 && detect_result.right_num > 0){          //Make sure there are people on both images
+        const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
+        // Convert left image result to Nx2 matrix: points1
+        for (int ip=0; ip<detect_result.left_num; ip++) {
+            for (int ij=0;ij<num_parts;ij++) {
+                points1.at<double>(ip*num_parts + ij,0) = detect_result.left_data[ip*num_parts*3 + ij*3+0];     // x pixel 
+                points1.at<double>(ip*num_parts + ij,1) = detect_result.left_data[ip*num_parts*3 + ij*3+1];     // y pixel 
+            }
+        }
+        // Convert right image result to Nx2 matrix: points2
+        for (int ip=0; ip<detect_result.right_num; ip++) {
+            for (int ij=0;ij<num_parts;ij++) {
+                points2.at<double>(ip*num_parts + ij,0) = detect_result.right_data[ip*num_parts*3 + ij*3+0];     // x pixel 
+                points2.at<double>(ip*num_parts + ij,1) = detect_result.right_data[ip*num_parts*3 + ij*3+1];     // y pixel 
+            }
+        }
+        // cv::computeCorrespondEpilines(points1, 1, Fund_matrix, epilines1); //Index starts with 1
+        // cv::computeCorrespondEpilines(points2, 2, Fund_matrix, epilines2);
+        
+        // for all epipolar lines
+        // for (vector<cv::Vec3f>::const_iterator it= linesLeft.begin(); it!=linesLeft.end(); ++it) {
+
+        //     // draw the epipolar line between first and last column
+        //     cv::line(imgRight,cv::Point(0,-(*it)[2]/(*it)[1]),cv::Point(imgRight.cols,-((*it)[2]+(*it)[0]*imgRight.cols)/(*it)[1]),cv::Scalar(255,255,255));
+        // }
+    }
+    
+}
+
 int main(int argc, char *argv[]) {
     
     // Initializing google logging (Caffe uses it as its logging module)
-    google::InitGoogleLogging("rtcpm");
-    printf("google::InitGoogleLogging\n");
+    google::InitGoogleLogging("rtcpm_stereo");
+    ROS_INFO("google::InitGoogleLogging");
     // Parsing command line flags
     gflags::ParseCommandLineFlags(&argc, &argv, true);
-    printf("gflags::ParseCommandLineFlags\n");
+    ROS_INFO("gflags::ParseCommandLineFlags");
     // Applying user defined configuration and/or default parameter values to global parameters
     auto return_value = setGlobalParametersFromFlags();
     if (return_value != 0)
         return return_value;
-    printf("setGlobalParametersFromFlags\n");
+    ROS_INFO("setGlobalParametersFromFlags");
     // Configure frames source
     return_value = readImageDirIfFlagEnabled();
     if (return_value != 0)
         return return_value;
-    printf("readImageDirIfFlagEnabled\n");
+    ROS_INFO("readImageDirIfFlagEnabled");
 
 
 
-    // Running rtcpm
-    return_value = rtcpm();
+    // Running rtcpm_stereo
+    return_value = rtcpm_stereo();
     if (return_value != 0)
         return return_value;
-    printf("rtcpm\n");
+    ROS_INFO("rtcpm_stereo started");
 
     ros::init(argc, argv, "ros_rtpose");
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
-    printf("ROS node started\n");
+    ROS_INFO("ROS node started");
 
     //ROS starts here
-    poseImagePublisher = it.advertise(PUBLISH_IMG_TOPIC_NAME, 1);
-    poseStrPublisher = nh.advertise<std_msgs::String>(PUBLISH_STR_TOPIC_NAME,1000);
+    poseLeftImagePublisher = it.advertise(PUBLISH_LEFT_IMG_TOPIC_NAME, 1);
+    poseRightImagePublisher = it.advertise(PUBLISH_RIGHT_IMG_TOPIC_NAME, 1);
+    // poseStrPublisher = nh.advertise<std_msgs::String>(PUBLISH_STR_TOPIC_NAME,1000);
     // poseAryPublisher = nh.advertise<std_msgs::Int32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
-    poseAryPublisher = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
+    // poseAryPublisher = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
+    poseDetectionPublisher = nh.advertise<rtpose_ros::Detection>(PUBLISH_DETECTION_NAME, 10);
     
+    // image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);
+    message_filters::Subscriber<sensor_msgs::Image> left_image_sub(nh, RECEIVE_LEFT_IMG_TOPIC_NAME, 1);
+    message_filters::Subscriber<sensor_msgs::Image> right_image_sub(nh, RECEIVE_RIGHT_IMG_TOPIC_NAME, 1);
+    message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::Image> sync(left_image_sub, right_image_sub, 10);
+    sync.registerCallback(boost::bind(&getStereoFrameFromROS, _1, _2));
+
+    // Publish the result stereo images to ROS if images are ready in global.output_queue_ordered
+    image_transport::Subscriber sub2 = it.subscribe(RECEIVE_LEFT_IMG_TOPIC_NAME, 1, displayROSFrameStereo); //Actually This is used for publish frame
+
+    // Start to reconstruct the 3d pose by epipolar geometry if any detection result has been generated.
+    ros::Subscriber sub3 = nh.subscribe(PUBLISH_DETECTION_NAME,1,reconstruct_3d_pose);
     
-    image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);
-
-    image_transport::Subscriber sub2 = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, displayROSFrame); //Actually This is used for publish frame
-
     ros::spin();
 
     ros::shutdown();

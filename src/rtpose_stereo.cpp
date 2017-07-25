@@ -2426,46 +2426,249 @@ int readImageDirIfFlagEnabled()
     return 0;
 }
 
+void compute_epilines(cv::Mat points, int img_case, cv::Matx<float,3,3>  Fund_matrix, std::vector<cv::Vec<float,3>> &epilines){
+    // std::cout << "points size is: "<< points.size() << std::endl;
+    // std::cout << "points.rows is: "<< points.rows << std::endl;
+    if (img_case==1){
+        cv::transpose(Fund_matrix, Fund_matrix);
+    }
+    // std::cout << "Transposed Fund_matrix is: "<< Fund_matrix << std::endl;
+
+    float* mp = &points.at<float>(0);
+    float x, y;
+    cv::Vec<float,3> now_vec;
+    for (int row=0; row<points.rows; row++) {
+        x = mp[row*2];
+        y = mp[row*2 + 1];
+        for (int i=0; i<3; i++){
+            now_vec[i] = x*Fund_matrix(0,i) + y*Fund_matrix(1,i) + Fund_matrix(2,i);
+        }
+        epilines.push_back(now_vec);
+        // std::cout << "epilines.size() is: "<< epilines.size() << std::endl;
+        // std::cout << "epilines["<< row <<"] is: "<< epilines[row] << std::endl;
+    }
+    // std::cout << "epilines is: "<< epilines << std::endl;
+}
+
 void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
     ROS_INFO("Left image has %i people.",detect_result.left_num);
     ROS_INFO("Right image has %i people.",detect_result.right_num);
     const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
 
-    // Camera1 is the left camera, camera2 is thre right camera
-    cv::Mat points1 = cv::Mat(detect_result.left_num*num_parts, 2, CV_64F);
-    ROS_INFO("points1.rows = %i", points1.rows);
-    cv::Mat points2 = cv::Mat(detect_result.right_num*num_parts, 2, CV_64F);
-    std::vector<cv::Vec3f> epilines1, epilines2;
-    cv::Mat Fund_matrix = cv::Mat(3,3,CV_64F);
-    Fund_matrix.at<double>(0,0) = -9.09430389e-10;
-    Fund_matrix.at<double>(0,1) = 2.70030811e-06;
-    Fund_matrix.at<double>(0,2) = -9.16306854e-04;
-    Fund_matrix.at<double>(1,0) = -1.82561938e-06;
-    Fund_matrix.at<double>(1,1) = 3.75124867e-07;
-    Fund_matrix.at<double>(1,2) = 0.18062506;
-    Fund_matrix.at<double>(2,0) = 6.80660378e-04;
-    Fund_matrix.at<double>(2,1) = -0.18121823;
-    Fund_matrix.at<double>(2,2) = 0.14064993;
+        
 
     if(detect_result.left_num > 0 && detect_result.right_num > 0){          //Make sure there are people on both images
-        
-        // Convert left image result to Nx2 matrix: points1
-        for (int ip=0; ip<detect_result.left_num; ip++) {
-            for (int ij=0;ij<num_parts;ij++) {
-                points1.at<double>(ip*num_parts + ij,0) = detect_result.left_data[ip*num_parts*3 + ij*3+0];     // x pixel 
-                points1.at<double>(ip*num_parts + ij,1) = detect_result.left_data[ip*num_parts*3 + ij*3+1];     // y pixel 
-            }
-        }
-        // Convert right image result to Nx2 matrix: points2
-        for (int ip=0; ip<detect_result.right_num; ip++) {
-            for (int ij=0;ij<num_parts;ij++) {
-                points2.at<double>(ip*num_parts + ij,0) = detect_result.right_data[ip*num_parts*3 + ij*3+0];     // x pixel 
-                points2.at<double>(ip*num_parts + ij,1) = detect_result.right_data[ip*num_parts*3 + ij*3+1];     // y pixel 
-            }
-        }
-        // cv::computeCorrespondEpilines(points1, 1, Fund_matrix, epilines1); //Index starts with 1
-        // cv::computeCorrespondEpilines(points2, 2, Fund_matrix, epilines2);
 
+
+        cv::Matx<float,3,3> Fund_matrix;
+        // cv::Mat Fund_matrix = cv::Mat(3,3,CV_64F);
+        Fund_matrix(0,0) = -9.09430389e-10;
+        Fund_matrix(0,1) = 2.70030811e-06;
+        Fund_matrix(0,2) = -9.16306854e-04;
+        Fund_matrix(1,0) = -1.82561938e-06;
+        Fund_matrix(1,1) = 3.75124867e-07;
+        Fund_matrix(1,2) = 0.18062506;
+        Fund_matrix(2,0) = 6.80660378e-04;
+        Fund_matrix(2,1) = -0.18121823;
+        Fund_matrix(2,2) = 0.14064993;
+        
+        std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
+
+        // Camera1 is the left camera, camera2 is thre right camera
+        // cv::Mat points1 = cv::Mat(detect_result.left_num*num_parts, 2, CV_32F);     //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format),  row major order
+        // ROS_INFO("points1.cols = %i", points1.cols);
+        // cv::Mat points2 = cv::Mat(detect_result.right_num*num_parts, 2, CV_32F);    //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format)
+        // std::vector<cv::Point> mypoints1, mypoints2;
+        std::vector<cv::Vec<float,3>> epilines1, epilines2;
+        // cv::Point newPoint;
+
+        // float* mp1 = &points1.at<float>(0);
+        // float* mp2 = &points1.at<float>(0);
+        // // Convert left image result to Nx2 matrix: points1
+        // for (int ip=0; ip<detect_result.left_num; ip++) {
+        //     for (int ij=0;ij<num_parts;ij++) {
+        //         float x_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+0]);
+        //         float y_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+1]);
+        //         std::cout << "detect_result.left_data: "<< detect_result.left_data[ip*num_parts*3 + ij*3+0] << std::endl;
+        //         std::cout << "detect_result.left_data, float: "<< float(detect_result.left_data[ip*num_parts*3 + ij*3+0]) << std::endl;
+        //         // point1 is a Nx2 marix and data are stored in a row major order, which means points1.data[1] is the second number in the first row!!
+        //         mp1[(ip*num_parts+ij)*2] = float(x_pixel);                               // x pixel 
+        //         mp1[(ip*num_parts+ij)*2 + 1] = float(y_pixel);      // y pixel 
+        //         // newPoint.x = x_pixel;
+        //         // newPoint.y = y_pixel;
+        //         // mypoints1.push_back(newPoint);
+        //     }
+        // }
+        // // Convert right image result to Nx2 matrix: points2
+        // for (int ip=0; ip<detect_result.right_num; ip++) {
+        //     for (int ij=0;ij<num_parts;ij++) {
+        //         float x_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+0];
+        //         float y_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+1];
+        //         mp2[(ip*num_parts+ij)*2] = float(x_pixel);                               // x pixel 
+        //         mp2[(ip*num_parts+ij)*2 +1] = float(y_pixel);      // y pixel  
+        //         // newPoint.x = x_pixel;
+        //         // newPoint.y = y_pixel;
+        //         // mypoints2.push_back(newPoint);
+        //     }
+        // }
+
+        // std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
+        // std::cout << "points1.size() is: "<< points1.size() << std::endl;
+        // std::cout << "sizeof(CV_32F) is: "<< sizeof(CV_32F) << std::endl;
+
+        ///////////////////// For debugging ///////////////////////////////////
+        // x_left_now =
+
+        //    648   263
+        //    651   310
+        //    600   310
+        //    536   292
+        //    456   264
+        //    701   309
+        //    769   292
+        //    838   271
+        //    633   454
+        //    649   568
+        //    658   675
+        //    689   441
+        //    697   483
+        //    702   579
+        //    638   255
+        //    658   255
+        //    623   260
+        //    671   259
+
+        // epiLines =
+
+        //    -0.0002    0.1795  -47.0787
+        //    -0.0001    0.1796  -55.5939
+        //    -0.0001    0.1796  -55.6286
+        //    -0.0001    0.1798  -52.4102
+        //    -0.0002    0.1799  -47.3906
+        //    -0.0001    0.1795  -55.3786
+        //    -0.0001    0.1793  -52.2516
+        //    -0.0002    0.1792  -48.3991
+        //     0.0003    0.1796  -81.7016
+        //     0.0006    0.1797 -102.3496
+        //     0.0009    0.1797 -121.7338
+        //     0.0003    0.1795  -79.3076
+        //     0.0004    0.1795  -86.9133
+        //     0.0006    0.1796 -104.3069
+        //    -0.0002    0.1796  -45.6357
+        //    -0.0002    0.1795  -45.6221
+        //    -0.0002    0.1796  -46.5520
+        //    -0.0002    0.1795  -46.3382
+
+           // x_right_1 =
+
+           // 610   264
+           // 615   310
+           // 565   311
+           // 500   293
+           // 418   264
+           // 665   309
+           // 734   293
+           // 801   271
+           // 598   453
+           // 613   569
+           // 623   676
+           // 652   440
+           // 654   484
+           // 663   575
+           // 600   255
+           // 620   255
+           // 589   261
+           // 636   260
+
+        cv::Mat points1 = cv::Mat(18, 2, CV_32F);
+        float* mp1 = &points1.at<float>(0);
+        for (int ip=0; ip<1; ip++) {
+            mp1[0] = float(648);       // x pixel 
+            mp1[1] = float(263);      // y pixel 
+            mp1[2] = float(651);       // x pixel 
+            mp1[3] = float(310);      // y pixel 
+            mp1[4] = float(600);       // x pixel 
+            mp1[5] = float(310);      // y pixel 
+            mp1[6] = float(536);       // x pixel 
+            mp1[7] = float(292);      // y pixel 
+            mp1[8] = float(456);       // x pixel 
+            mp1[9] = float(264);      // y pixel 
+            mp1[10] = float(701);       // x pixel 
+            mp1[11] = float(309);      // y pixel 
+            mp1[12] = float(769);       // x pixel 
+            mp1[13] = float(292);      // y pixel 
+            mp1[14] = float(838);       // x pixel 
+            mp1[15] = float(271);      // y pixel 
+            mp1[16] = float(633);       // x pixel 
+            mp1[17] = float(454);      // y pixel 
+            mp1[18] = float(649);       // x pixel 
+            mp1[19] = float(568);      // y pixel 
+            mp1[20] = float(658);       // x pixel 
+            mp1[21] = float(675);      // y pixel 
+            mp1[22] = float(689);       // x pixel 
+            mp1[23] = float(441);      // y pixel 
+            mp1[24] = float(697);       // x pixel 
+            mp1[25] = float(483);      // y pixel 
+            mp1[26] = float(702);       // x pixel 
+            mp1[27] = float(579);      // y pixel 
+            mp1[28] = float(638);       // x pixel 
+            mp1[29] = float(255);      // y pixel 
+            mp1[30] = float(658);       // x pixel 
+            mp1[31] = float(255);      // y pixel 
+            mp1[32] = float(623);       // x pixel 
+            mp1[33] = float(260);      // y pixel 
+            mp1[34] = float(671);       // x pixel 
+            mp1[35] = float(259);      // y pixel 
+        }
+        cv::Mat points2 = cv::Mat(18, 2, CV_32F);
+        float* mp2 = &points2.at<float>(0);
+        for (int ip=0; ip<1; ip++) {
+            mp2[0] = float(610);       // x pixel 
+            mp2[1] = float(264);      // y pixel 
+            mp2[2] = float(615);       // x pixel 
+            mp2[3] = float(310);      // y pixel 
+            mp2[4] = float(565);       // x pixel 
+            mp2[5] = float(311);      // y pixel 
+            mp2[6] = float(500);       // x pixel 
+            mp2[7] = float(293);      // y pixel 
+            mp2[8] = float(418);       // x pixel 
+            mp2[9] = float(264);      // y pixel 
+            mp2[10] = float(665);       // x pixel 
+            mp2[11] = float(309);      // y pixel 
+            mp2[12] = float(734);       // x pixel 
+            mp2[13] = float(293);      // y pixel 
+            mp2[14] = float(801);       // x pixel 
+            mp2[15] = float(271);      // y pixel 
+            mp2[16] = float(598);       // x pixel 
+            mp2[17] = float(454);      // y pixel 
+            mp2[18] = float(613);       // x pixel 
+            mp2[19] = float(569);      // y pixel 
+            mp2[20] = float(623);       // x pixel 
+            mp2[21] = float(676);      // y pixel 
+            mp2[22] = float(652);       // x pixel 
+            mp2[23] = float(440);      // y pixel 
+            mp2[24] = float(654);       // x pixel 
+            mp2[25] = float(484);      // y pixel 
+            mp2[26] = float(663);       // x pixel 
+            mp2[27] = float(575);      // y pixel 
+            mp2[28] = float(600);       // x pixel 
+            mp2[29] = float(255);      // y pixel 
+            mp2[30] = float(620);       // x pixel 
+            mp2[31] = float(255);      // y pixel 
+            mp2[32] = float(589);       // x pixel 
+            mp2[33] = float(261);      // y pixel 
+            mp2[34] = float(636);       // x pixel 
+            mp2[35] = float(260);      // y pixel 
+        }
+        ///////////////////// For debugging ///////////////////////////////////
+        compute_epilines(points1, 1, Fund_matrix, epilines1);  // input is pts on the left image, output is the correspond epilines on the right image
+        // std::cout << "epilines1.size() is: "<< epilines1.size() << std::endl;
+        for(int k=0; k<epilines1.size(); k++){          //goes through all cv::Vec<float,3> in the std::vector
+            std::cout << "points1 is: "<< points1.at<float>(2*k) << "," << points1.at<float>(2*k+1) << std::endl;
+            std::cout << "epilines1["<< k <<"] is: "<< epilines1[k] << std::endl;
+            float cost = points1.at<float>(2*k)*epilines1[k][0] + points1.at<float>(2*k+1)*epilines1[k][1] + epilines1[k][2];
+            std::cout << "for epiline ["<< k <<"], cost is: "<< cost << std::endl;
+        }
         // for all epipolar lines
         // for (vector<cv::Vec3f>::const_iterator it= linesLeft.begin(); it!=linesLeft.end(); ++it) {
 

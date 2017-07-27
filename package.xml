@@ -49,6 +49,9 @@
   <build_depend>rosconsole</build_depend>
   <build_depend>dynamic_reconfigure</build_depend>
   <build_depend>message_generation</build_depend>
+  <build_depend>pcl_ros</build_depend>
+  <build_depend>pcl</build_depend>
+
 
 
   <run_depend>roscpp</run_depend>
@@ -60,6 +63,8 @@
   <run_depend>rosconsole</run_depend>
   <run_depend>dynamic_reconfigure</run_depend>
   <run_depend>message_runtime</run_depend>
+  <run_depend>pcl_ros</run_depend>
+  <run_depend>pcl</run_depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>

@@ -37,6 +37,8 @@ find_package(catkin REQUIRED COMPONENTS
 set(CAFFE_INCLUDEDIR caffe_rtpose/include caffe_rtpose/distribute/include)
 set(CAFFE_LINK_LIBRARAY caffe_rtpose/build/lib)
 
+set(HUNGARIAN_INCLUDEDIR hungarian/include)
+set(HUNGARIAN_LINK_LIBRARAY hungarian/src)
 
 
 ## System dependencies are found with CMake's conventions
@@ -143,6 +145,7 @@ include_directories(
 ###################### Added by Fan Bu ##############################
 
 ##################### OpenCV Packages by Fan Bu #####################
+find_package(PCL REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
   image_transport
   roscpp
@@ -166,9 +169,12 @@ include_directories(
 	${catkin_INCLUDE_DIRS} 
 	${OpenCV_INCLUDE_DIRS}
 	${PCL_INCLUDE_DIRS}
+	${HUNGARIAN_INCLUDEDIR}
 )
+add_library(hungarian hungarian/src/Hungarian.cpp)
 
 link_directories(${OpenCV_LIBRARY_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
 ##################### OpenCV Packages by Fan Bu #####################
 
 
@@ -183,7 +189,10 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
-include_directories(${CAFFE_INCLUDEDIR})
+include_directories(
+  ${CAFFE_INCLUDEDIR}
+)
+
 ## Declare a cpp library
 # add_library(ros_caffe
 #   src/${PROJECT_NAME}/ros_caffe.cpp
@@ -248,7 +257,9 @@ include_directories(${CAFFE_INCLUDEDIR})
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
-link_directories(${CAFFE_LINK_LIBRARAY})
+
+link_directories(${CAFFE_LINK_LIBRARAY}		
+		${HUNGARIAN_LINK_LIBRARY})
 
 
 ########################### lint make -- Fan Bu ##############################
@@ -277,8 +288,6 @@ link_directories(${CAFFE_LINK_LIBRARAY})
 # exclude generated pb files
 #list(REMOVE_ITEM LINT_SOURCES ${EXCLUDED_FILES})
 ########################### lint make -- Fan Bu ##############################
-
-
 add_executable(rtpose_node src/rtpose_node.cpp)
 add_executable(rtpose_node_left src/rtpose_node_left.cpp)
 add_executable(rtpose_node_right src/rtpose_node_right.cpp)
@@ -330,8 +339,10 @@ target_link_libraries(
     )
 target_link_libraries(
         rtpose_stereo
+	hungarian
         ${catkin_LIBRARIES}
         ${OpenCV_LIBS}
+	${PCL_LIBRARY_DIRS}
     )
 add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo ${PROJECT_NAME}_gencfg)
 ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo Lib)

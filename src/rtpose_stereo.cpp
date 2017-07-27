@@ -75,6 +75,11 @@
 
 // My own message type
 #include "rtpose_ros/Detection.h"
+#include "Hungarian.h"
+
+// PCL includes
+#include <pcl_ros/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
@@ -135,6 +140,8 @@ const std::string PUBLISH_RIGHT_IMG_TOPIC_NAME = "pose_estimate/image_right";
 // const std::string PUBLISH_STR_TOPIC_NAME = "pose_estimate/str";
 // const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";
 const std::string PUBLISH_DETECTION_NAME = "pose_estimate/detection";
+const std::string PUBLISH_3D_PCD_NAME = "pose_estimate/pcd";
+std::string camera_link_name = "camera_link";
 
 cv::Mat final_img;
 image_transport::Publisher poseLeftImagePublisher;
@@ -143,6 +150,8 @@ std_msgs::Header header;
 // ros::Publisher poseStrPublisher;// Buffer size 1000
 // ros::Publisher poseAryPublisher;// To publish estimation array
 ros::Publisher poseDetectionPublisher;// To publish Detection of stareo images(customized message format)
+ros::Publisher cloudRGBPublisher;
+
 
 int display_counter = 1;
 double last_pop_time;
@@ -2453,6 +2462,8 @@ void compute_epilines(cv::Mat points, int img_case, cv::Matx<float,3,3>  Fund_ma
 void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
     ROS_INFO("Left image has %i people.",detect_result.left_num);
     ROS_INFO("Right image has %i people.",detect_result.right_num);
+    int left_num = detect_result.left_num;
+    int right_num = detect_result.right_num;
     const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
 
         
@@ -2475,42 +2486,34 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
         std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
 
         // Camera1 is the left camera, camera2 is thre right camera
-        // cv::Mat points1 = cv::Mat(detect_result.left_num*num_parts, 2, CV_32F);     //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format),  row major order
-        // ROS_INFO("points1.cols = %i", points1.cols);
-        // cv::Mat points2 = cv::Mat(detect_result.right_num*num_parts, 2, CV_32F);    //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format)
-        // std::vector<cv::Point> mypoints1, mypoints2;
+        cv::Mat points1 = cv::Mat(left_num*num_parts, 2, CV_32F);     //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format),  row major order
+        cv::Mat points2 = cv::Mat(right_num*num_parts, 2, CV_32F);    //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format)
         std::vector<cv::Vec<float,3>> epilines1, epilines2;
-        // cv::Point newPoint;
 
-        // float* mp1 = &points1.at<float>(0);
-        // float* mp2 = &points1.at<float>(0);
+        float* mp1 = &points1.at<float>(0);
+        float* mp2 = &points2.at<float>(0);
         // // Convert left image result to Nx2 matrix: points1
-        // for (int ip=0; ip<detect_result.left_num; ip++) {
-        //     for (int ij=0;ij<num_parts;ij++) {
-        //         float x_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+0]);
-        //         float y_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+1]);
-        //         std::cout << "detect_result.left_data: "<< detect_result.left_data[ip*num_parts*3 + ij*3+0] << std::endl;
-        //         std::cout << "detect_result.left_data, float: "<< float(detect_result.left_data[ip*num_parts*3 + ij*3+0]) << std::endl;
-        //         // point1 is a Nx2 marix and data are stored in a row major order, which means points1.data[1] is the second number in the first row!!
-        //         mp1[(ip*num_parts+ij)*2] = float(x_pixel);                               // x pixel 
-        //         mp1[(ip*num_parts+ij)*2 + 1] = float(y_pixel);      // y pixel 
-        //         // newPoint.x = x_pixel;
-        //         // newPoint.y = y_pixel;
-        //         // mypoints1.push_back(newPoint);
-        //     }
-        // }
+        for (int ip=0; ip<left_num; ip++) {
+            for (int ij=0;ij<num_parts;ij++) {
+                float x_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+0]);
+                float y_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+1]);
+                std::cout << "detect_result.left_data: "<< x_pixel << "," << y_pixel << std::endl;
+                // std::cout << "detect_result.left_data, float: "<< float(detect_result.left_data[ip*num_parts*3 + ij*3+0]) << std::endl;
+                // point1 is a Nx2 marix and data are stored in a row major order, which means points1.data[1] is the second number in the first row!!
+                mp1[(ip*num_parts+ij)*2] = float(x_pixel);          // x pixel 
+                mp1[(ip*num_parts+ij)*2 + 1] = float(y_pixel);      // y pixel 
+            }
+        }
         // // Convert right image result to Nx2 matrix: points2
-        // for (int ip=0; ip<detect_result.right_num; ip++) {
-        //     for (int ij=0;ij<num_parts;ij++) {
-        //         float x_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+0];
-        //         float y_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+1];
-        //         mp2[(ip*num_parts+ij)*2] = float(x_pixel);                               // x pixel 
-        //         mp2[(ip*num_parts+ij)*2 +1] = float(y_pixel);      // y pixel  
-        //         // newPoint.x = x_pixel;
-        //         // newPoint.y = y_pixel;
-        //         // mypoints2.push_back(newPoint);
-        //     }
-        // }
+        for (int ip=0; ip<right_num; ip++) {
+            for (int ij=0;ij<num_parts;ij++) {
+                float x_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+0];
+                float y_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+1];
+                std::cout << "detect_result.right_data: "<< x_pixel << "," << y_pixel << std::endl;
+                mp2[(ip*num_parts+ij)*2] = float(x_pixel);         // x pixel 
+                mp2[(ip*num_parts+ij)*2 +1] = float(y_pixel);      // y pixel  
+            }
+        }
 
         // std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
         // std::cout << "points1.size() is: "<< points1.size() << std::endl;
@@ -2580,95 +2583,598 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
            // 589   261
            // 636   260
 
-        cv::Mat points1 = cv::Mat(18, 2, CV_32F);
-        float* mp1 = &points1.at<float>(0);
-        for (int ip=0; ip<1; ip++) {
-            mp1[0] = float(648);       // x pixel 
-            mp1[1] = float(263);      // y pixel 
-            mp1[2] = float(651);       // x pixel 
-            mp1[3] = float(310);      // y pixel 
-            mp1[4] = float(600);       // x pixel 
-            mp1[5] = float(310);      // y pixel 
-            mp1[6] = float(536);       // x pixel 
-            mp1[7] = float(292);      // y pixel 
-            mp1[8] = float(456);       // x pixel 
-            mp1[9] = float(264);      // y pixel 
-            mp1[10] = float(701);       // x pixel 
-            mp1[11] = float(309);      // y pixel 
-            mp1[12] = float(769);       // x pixel 
-            mp1[13] = float(292);      // y pixel 
-            mp1[14] = float(838);       // x pixel 
-            mp1[15] = float(271);      // y pixel 
-            mp1[16] = float(633);       // x pixel 
-            mp1[17] = float(454);      // y pixel 
-            mp1[18] = float(649);       // x pixel 
-            mp1[19] = float(568);      // y pixel 
-            mp1[20] = float(658);       // x pixel 
-            mp1[21] = float(675);      // y pixel 
-            mp1[22] = float(689);       // x pixel 
-            mp1[23] = float(441);      // y pixel 
-            mp1[24] = float(697);       // x pixel 
-            mp1[25] = float(483);      // y pixel 
-            mp1[26] = float(702);       // x pixel 
-            mp1[27] = float(579);      // y pixel 
-            mp1[28] = float(638);       // x pixel 
-            mp1[29] = float(255);      // y pixel 
-            mp1[30] = float(658);       // x pixel 
-            mp1[31] = float(255);      // y pixel 
-            mp1[32] = float(623);       // x pixel 
-            mp1[33] = float(260);      // y pixel 
-            mp1[34] = float(671);       // x pixel 
-            mp1[35] = float(259);      // y pixel 
-        }
-        cv::Mat points2 = cv::Mat(18, 2, CV_32F);
-        float* mp2 = &points2.at<float>(0);
-        for (int ip=0; ip<1; ip++) {
-            mp2[0] = float(610);       // x pixel 
-            mp2[1] = float(264);      // y pixel 
-            mp2[2] = float(615);       // x pixel 
-            mp2[3] = float(310);      // y pixel 
-            mp2[4] = float(565);       // x pixel 
-            mp2[5] = float(311);      // y pixel 
-            mp2[6] = float(500);       // x pixel 
-            mp2[7] = float(293);      // y pixel 
-            mp2[8] = float(418);       // x pixel 
-            mp2[9] = float(264);      // y pixel 
-            mp2[10] = float(665);       // x pixel 
-            mp2[11] = float(309);      // y pixel 
-            mp2[12] = float(734);       // x pixel 
-            mp2[13] = float(293);      // y pixel 
-            mp2[14] = float(801);       // x pixel 
-            mp2[15] = float(271);      // y pixel 
-            mp2[16] = float(598);       // x pixel 
-            mp2[17] = float(454);      // y pixel 
-            mp2[18] = float(613);       // x pixel 
-            mp2[19] = float(569);      // y pixel 
-            mp2[20] = float(623);       // x pixel 
-            mp2[21] = float(676);      // y pixel 
-            mp2[22] = float(652);       // x pixel 
-            mp2[23] = float(440);      // y pixel 
-            mp2[24] = float(654);       // x pixel 
-            mp2[25] = float(484);      // y pixel 
-            mp2[26] = float(663);       // x pixel 
-            mp2[27] = float(575);      // y pixel 
-            mp2[28] = float(600);       // x pixel 
-            mp2[29] = float(255);      // y pixel 
-            mp2[30] = float(620);       // x pixel 
-            mp2[31] = float(255);      // y pixel 
-            mp2[32] = float(589);       // x pixel 
-            mp2[33] = float(261);      // y pixel 
-            mp2[34] = float(636);       // x pixel 
-            mp2[35] = float(260);      // y pixel 
-        }
+        // left_num = 1;
+        // right_num = 1;
+
+        // cv::Mat points1 = cv::Mat(18, 2, CV_32F);
+        // float* mp1 = &points1.at<float>(0);
+        // for (int ip=0; ip<1; ip++) {
+        //     mp1[0] = float(648);       // x pixel 
+        //     mp1[1] = float(263);      // y pixel 
+        //     mp1[2] = float(651);       // x pixel 
+        //     mp1[3] = float(310);      // y pixel 
+        //     mp1[4] = float(600);       // x pixel 
+        //     mp1[5] = float(310);      // y pixel 
+        //     mp1[6] = float(536);       // x pixel 
+        //     mp1[7] = float(292);      // y pixel 
+        //     mp1[8] = float(456);       // x pixel 
+        //     mp1[9] = float(264);      // y pixel 
+        //     mp1[10] = float(701);       // x pixel 
+        //     mp1[11] = float(309);      // y pixel 
+        //     mp1[12] = float(769);       // x pixel 
+        //     mp1[13] = float(292);      // y pixel 
+        //     mp1[14] = float(838);       // x pixel 
+        //     mp1[15] = float(271);      // y pixel 
+        //     mp1[16] = float(633);       // x pixel 
+        //     mp1[17] = float(454);      // y pixel 
+        //     mp1[18] = float(649);       // x pixel 
+        //     mp1[19] = float(568);      // y pixel 
+        //     mp1[20] = float(658);       // x pixel 
+        //     mp1[21] = float(675);      // y pixel 
+        //     mp1[22] = float(689);       // x pixel 
+        //     mp1[23] = float(441);      // y pixel 
+        //     mp1[24] = float(697);       // x pixel 
+        //     mp1[25] = float(483);      // y pixel 
+        //     mp1[26] = float(702);       // x pixel 
+        //     mp1[27] = float(579);      // y pixel 
+        //     mp1[28] = float(638);       // x pixel 
+        //     mp1[29] = float(255);      // y pixel 
+        //     mp1[30] = float(658);       // x pixel 
+        //     mp1[31] = float(255);      // y pixel 
+        //     mp1[32] = float(623);       // x pixel 
+        //     mp1[33] = float(260);      // y pixel 
+        //     mp1[34] = float(671);       // x pixel 
+        //     mp1[35] = float(259);      // y pixel 
+        // }
+        // cv::Mat points2 = cv::Mat(18, 2, CV_32F);
+        // float* mp2 = &points2.at<float>(0);
+        // for (int ip=0; ip<1; ip++) {
+        //     mp2[0] = float(610);       // x pixel 
+        //     mp2[1] = float(264);      // y pixel 
+        //     mp2[2] = float(615);       // x pixel 
+        //     mp2[3] = float(310);      // y pixel 
+        //     mp2[4] = float(565);       // x pixel 
+        //     mp2[5] = float(311);      // y pixel 
+        //     mp2[6] = float(500);       // x pixel 
+        //     mp2[7] = float(293);      // y pixel 
+        //     mp2[8] = float(418);       // x pixel 
+        //     mp2[9] = float(264);      // y pixel 
+        //     mp2[10] = float(665);       // x pixel 
+        //     mp2[11] = float(309);      // y pixel 
+        //     mp2[12] = float(734);       // x pixel 
+        //     mp2[13] = float(293);      // y pixel 
+        //     mp2[14] = float(801);       // x pixel 
+        //     mp2[15] = float(271);      // y pixel 
+        //     mp2[16] = float(598);       // x pixel 
+        //     mp2[17] = float(454);      // y pixel 
+        //     mp2[18] = float(613);       // x pixel 
+        //     mp2[19] = float(569);      // y pixel 
+        //     mp2[20] = float(623);       // x pixel 
+        //     mp2[21] = float(676);      // y pixel 
+        //     mp2[22] = float(652);       // x pixel 
+        //     mp2[23] = float(440);      // y pixel 
+        //     mp2[24] = float(654);       // x pixel 
+        //     mp2[25] = float(484);      // y pixel 
+        //     mp2[26] = float(663);       // x pixel 
+        //     mp2[27] = float(575);      // y pixel 
+        //     mp2[28] = float(600);       // x pixel 
+        //     mp2[29] = float(255);      // y pixel 
+        //     mp2[30] = float(620);       // x pixel 
+        //     mp2[31] = float(255);      // y pixel 
+        //     mp2[32] = float(589);       // x pixel 
+        //     mp2[33] = float(261);      // y pixel 
+        //     mp2[34] = float(636);       // x pixel 
+        //     mp2[35] = float(260);      // y pixel 
+        // }
         ///////////////////// For debugging ///////////////////////////////////
         compute_epilines(points1, 1, Fund_matrix, epilines1);  // input is pts on the left image, output is the correspond epilines on the right image
         // std::cout << "epilines1.size() is: "<< epilines1.size() << std::endl;
-        for(int k=0; k<epilines1.size(); k++){          //goes through all cv::Vec<float,3> in the std::vector
-            std::cout << "points1 is: "<< points1.at<float>(2*k) << "," << points1.at<float>(2*k+1) << std::endl;
-            std::cout << "epilines1["<< k <<"] is: "<< epilines1[k] << std::endl;
-            float cost = points1.at<float>(2*k)*epilines1[k][0] + points1.at<float>(2*k+1)*epilines1[k][1] + epilines1[k][2];
-            std::cout << "for epiline ["<< k <<"], cost is: "<< cost << std::endl;
+        vector< vector<double> > costMatrix;
+        double infinity_cost = 1000;
+        for (int il=0; il<left_num; il++) {
+            vector<double> cost_row;
+            for (int ir=0; ir<right_num; ir++) {
+                float cost = 0;
+                int useful_num = 0;
+                for(int k=il*num_parts; k<(il+1)*num_parts; k++){          //goes through all cv::Vec<float,3> in the std::vector
+                    // std::cout << "points1 is: "<< points1.at<float>(2*k) << "," << points1.at<float>(2*k+1) << std::endl;
+                    // std::cout << "points2 is: "<< points2.at<float>(2*k) << "," << points2.at<float>(2*k+1) << std::endl;
+                    if (points1.at<float>(2*k)>0 && points1.at<float>(2*k+1)>0 && points2.at<float>(2*k)>0 && points2.at<float>(2*k+1)>0){
+                        // std::cout << "points1 is: "<< points1.at<float>(2*k) << "," << points1.at<float>(2*k+1) << std::endl;
+                        // std::cout << "epilines1["<< k <<"] is: "<< epilines1[k] << std::endl;
+                        float now_cost = abs(points1.at<float>(2*k)*epilines1[k][0] + points1.at<float>(2*k+1)*epilines1[k][1] + epilines1[k][2]);
+                        // std::cout << "for epiline ["<< k <<"], cost is: "<< now_cost << std::endl;
+                        cost = cost + now_cost;
+                        useful_num++;
+                    }
+                }
+                if(useful_num != 0){
+                    cost_row.push_back(double(cost/useful_num));
+                }
+                else{
+                    cost_row.push_back(infinity_cost);
+                }
+                // Since Hungarian need the cost matrix to be a square matrix, we should fill the blank with infinity_cost if rows are more than columns
+                if(left_num>right_num){
+                    for(int i=0; i<(left_num-right_num); i++){
+                        cost_row.push_back(infinity_cost);
+                    }
+                }
+            }
+            costMatrix.push_back(cost_row);
         }
+        // Since Hungarian need the cost matrix to be a square matrix, we should fill the blank with infinity_cost if columns are more than rows
+        if(left_num<right_num){
+            for(int j=0; j<(right_num-left_num); j++){
+                vector<double> cost_row;
+                for(int i=0; i<right_num; i++){
+                    cost_row.push_back(infinity_cost);
+                }
+                costMatrix.push_back(cost_row);
+            }
+        }
+        std::cout << "costMatrix row size() is: " << costMatrix.size() << std::endl;
+        std::cout << "costMatrix col size() is: " << costMatrix[0].size() << std::endl;
+        // std::cout << "costMatrix is: " << costMatrix[0][0] << std::endl;
+        for (unsigned int x = 0; x < costMatrix.size(); x++){
+            for (unsigned int y = 0; y < costMatrix[0].size(); y++){
+                std::cout << "costMatrix is: " << costMatrix[x][y] << std::endl;
+            }
+        }
+
+        // Data association
+        HungarianAlgorithm HungAlgo;
+        vector<int> assignment;
+        double cost_total = HungAlgo.Solve(costMatrix, assignment);
+        std::cout << "\ncost: " << cost_total << std::endl;
+
+        // Now, rearrange the detection results to two new Mat variables "points1_new" and "points2_new", and only keep the associated data
+        double cost_of_non_assignment = 1;
+        int useful_pair = 0;
+        vector<int> useful_left_index;
+        for (unsigned int x = 0; x <left_num; x++){
+            if(x<left_num && assignment[x]<right_num && costMatrix[x][assignment[x]]<cost_of_non_assignment){
+                useful_pair++;
+                useful_left_index.push_back(x);
+                std::cout << "assignment : " << x << "," << assignment[x] << "\t";
+            }
+            
+        }
+        if(useful_pair == 0){
+            // consider a situation that all elements in the cost_matrix are infinity, which means no useful pairing result.
+            // In this case, we should just jump out of this function.
+            return;
+        }
+
+        // For cv::triangulatePoints, rows have to be == 2 of the input points.
+        cv::Mat points1_new = cv::Mat(2, useful_pair*num_parts, CV_32F);
+        float* mp1_new = &points1_new.at<float>(0);
+        cv::Mat points2_new = cv::Mat(2, useful_pair*num_parts, CV_32F);
+        float* mp2_new = &points2_new.at<float>(0);
+        for (int i = 0; i < useful_pair; i++){
+            for (int ip=0; ip<num_parts; ip++) {
+                mp1_new[i*num_parts + ip] = mp1[useful_left_index[i]*num_parts + 2*ip];
+                mp1_new[useful_pair*num_parts + i*num_parts + ip] = mp1[useful_left_index[i]*num_parts + 2*ip + 1];
+                mp2_new[i*num_parts + ip] = mp2[assignment[i]*num_parts + 2*ip];
+                mp2_new[useful_pair*num_parts + i*num_parts + ip] = mp2[assignment[i]*num_parts + 2*ip + 1];
+                std::cout << "mp1_new[" << i*num_parts + ip<< "] is :"<< mp1_new[i*num_parts + ip]  << std::endl;
+                std::cout << "mp1_new[" << useful_pair*num_parts + i*num_parts + ip<< "] is :"<< mp1_new[useful_pair*num_parts + i*num_parts + ip]  << std::endl;
+            }
+        }
+
+        cv::Mat_<double> Camera_P1 = (cv::Mat_<double>(3,4) <<
+                        669.0622,   0,              677.9941,       0,
+                        0,          669.0140,       361.2724,       0,
+                        0,          0,              1,              0);
+        cv::Mat_<double> Camera_P2 = (cv::Mat_<double>(3,4) <<
+                        670.1632298,1.2470508,      6.762432090424326e+02,      -8.065791024010150e+04,
+                        0.8807893,  668.52436137,   3.611070472550634e+02,      -3.046998430787702e+02,
+                        0.00325779, 0.0014024390,   1,                          -0.815933154416481);
+        // cout << "P1\n" << cv::Mat(Camera_P0) << endl;
+        cout << "Camera_P0\n" << Camera_P1 << endl;
+        cout << "points1_new\n" << points1_new << endl;
+        cout << "points2_new\n" << points2_new << endl;
+        cv::Mat pt_3d_h(4,useful_pair,CV_32FC1);
+
+        cv::triangulatePoints(Camera_P1, Camera_P2, points1_new, points2_new, pt_3d_h);
+        // Since the triangulation uses a SVD to compute the solution, the points in pt_3d_h are normalized to unit vectors.
+        std::cout << "pt_3d_h is: " << pt_3d_h << std::endl;
+        // std::cout << "pt_3d_h.at<float>(0) is: " << pt_3d_h.at<float>(1,15) << std::endl;
+        // vector<cv::Point3f> pt_3d;
+        // cv::convertPointsFromHomogeneous(pt_3d_h.reshape(4, 1), pt_3d);
+        // std::cout << "pt_3d is: " << pt_3d << std::endl;
+
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_3d(new pcl::PointCloud<pcl::PointXYZRGB>);
+        for (int i=0; i<useful_pair; i++) {
+            // push back each joint
+            for (int j=0; j<num_parts; j++){
+                if(mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0){
+                    pcl::PointXYZRGB point;
+                    point.r = 255;
+                    point.g = 255;
+                    point.b = 255;
+                    point.y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000; //Unmornalize and then convert from mm to meter
+                    point.z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000; //Unmornalize and then convert from mm to meter
+                    point.x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000; //Unmornalize and then convert from mm to meter
+                    std::cout << "point is: " << point << std::endl;
+                    cloud_3d->points.push_back (point);
+                }
+            }
+            // create pointclouds for limbs if it is detected
+            for(int j=0; j<num_parts; j++){
+                pcl::PointXYZRGB point;
+                float start_x, start_y, start_z;
+                float end_x, end_y, end_z;
+                int pt_in_line = 10;
+                // Connect Nose to Neck
+                if(j==0 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*1.000;
+                    point.g = 255*0;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect Neck to RShoulder
+                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*1.000;
+                    point.g = 255*0.3158;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect RShoulder to RElbow
+                if(j==2 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*1.000;
+                    point.g = 255*0.6316;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect RElbow to RWrist
+                if(j==3 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*1.000;
+                    point.g = 255*0.9474;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect Neck to LShoulder
+                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 4]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 4]>0 && 
+                    mp2_new[i*num_parts + j + 4]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 4]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+4)/pt_3d_h.at<float>(3,i*num_parts + j+4)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+4)/pt_3d_h.at<float>(3,i*num_parts + j+4)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+4)/pt_3d_h.at<float>(3,i*num_parts + j+4)/1000;
+                    point.r = 255*0.7368;
+                    point.g = 255*1.000;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect LShoulder to LElbow
+                if(j==5 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*0.4211;
+                    point.g = 255*1.000;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect LElbow to LWrist
+                if(j==6 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*0.1053;
+                    point.g = 255*1.000;
+                    point.b = 255*0;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect Neck to RHip
+                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 7]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 7]>0 && 
+                    mp2_new[i*num_parts + j + 7]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 7]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+7)/pt_3d_h.at<float>(3,i*num_parts + j+7)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+7)/pt_3d_h.at<float>(3,i*num_parts + j+7)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+7)/pt_3d_h.at<float>(3,i*num_parts + j+7)/1000;
+                    point.r = 255*0;
+                    point.g = 255*1.000;
+                    point.b = 255*0.2105;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect RHip to RKnee
+                if(j==8 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*0;
+                    point.g = 255*1.000;
+                    point.b = 255*0.5263;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect RKnee to RAnkle
+                if(j==9 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*0;
+                    point.g = 255*1.000;
+                    point.b = 255*0.8421;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect Neck to LHip
+                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 10]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 10]>0 && 
+                    mp2_new[i*num_parts + j + 10]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 10]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+10)/pt_3d_h.at<float>(3,i*num_parts + j+10)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+10)/pt_3d_h.at<float>(3,i*num_parts + j+10)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+10)/pt_3d_h.at<float>(3,i*num_parts + j+10)/1000;
+                    point.r = 255*0;
+                    point.g = 255*0.8421;
+                    point.b = 255*1.0000;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect LHip to LKnee
+                if(j==11 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*0;
+                    point.g = 255*0.5263;
+                    point.b = 255*1.0000;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect LKnee to LAnkle
+                if(j==12 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
+                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+1)/pt_3d_h.at<float>(3,i*num_parts + j+1)/1000;
+                    point.r = 255*0;
+                    point.g = 255*0.2105;
+                    point.b = 255*1.0000;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect Nose to REye
+                if(j==0 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j +14]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j +14]>0 && 
+                    mp2_new[i*num_parts + j +14]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j +14]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+14)/pt_3d_h.at<float>(3,i*num_parts + j+14)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+14)/pt_3d_h.at<float>(3,i*num_parts + j+14)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+14)/pt_3d_h.at<float>(3,i*num_parts + j+14)/1000;
+                    point.r = 255*0.1053;
+                    point.g = 255*0;
+                    point.b = 255*1.0000;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect Nose to LEye
+                if(j==0 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j + 15]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 15]>0 && 
+                    mp2_new[i*num_parts + j + 15]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 15]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+15)/pt_3d_h.at<float>(3,i*num_parts + j+15)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+15)/pt_3d_h.at<float>(3,i*num_parts + j+15)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+15)/pt_3d_h.at<float>(3,i*num_parts + j+15)/1000;
+                    point.r = 255*0.4211;
+                    point.g = 255*0;
+                    point.b = 255*1.0000;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect REye to REar
+                if(j==14 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j +2]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j +2]>0 && 
+                    mp2_new[i*num_parts + j +2]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j +2]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+2)/pt_3d_h.at<float>(3,i*num_parts + j+2)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+2)/pt_3d_h.at<float>(3,i*num_parts + j+2)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+2)/pt_3d_h.at<float>(3,i*num_parts + j+2)/1000;
+                    point.r = 255*0.7368;
+                    point.g = 255*0;
+                    point.b = 255*1.0000;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+                // Connect LEye to LEar
+                if(j==15 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
+                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
+                    mp1_new[i*num_parts + j +2]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j +2]>0 && 
+                    mp2_new[i*num_parts + j +2]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j +2]>0){
+                    start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
+                    end_x = pt_3d_h.at<float>(2,i*num_parts + j+2)/pt_3d_h.at<float>(3,i*num_parts + j+2)/1000;
+                    end_y = -pt_3d_h.at<float>(0,i*num_parts + j+2)/pt_3d_h.at<float>(3,i*num_parts + j+2)/1000;
+                    end_z = -pt_3d_h.at<float>(1,i*num_parts + j+2)/pt_3d_h.at<float>(3,i*num_parts + j+2)/1000;
+                    point.r = 255*1.0000;
+                    point.g = 255*0;
+                    point.b = 255*0.9474;
+                    for(int k=1; k<pt_in_line; k++){
+                        point.x = ((end_x-start_x)/pt_in_line)*k+start_x;
+                        point.y = ((end_y-start_y)/pt_in_line)*k+start_y;
+                        point.z = ((end_z-start_z)/pt_in_line)*k+start_z;
+                        cloud_3d->points.push_back (point);
+                    }
+                }
+            }
+        }
+        ros::Time now = ros::Time::now();
+        pcl_conversions::toPCL(now, cloud_3d->header.stamp);
+        cloud_3d->header.frame_id = camera_link_name;
+        cloudRGBPublisher.publish(*cloud_3d);
+
+
+
+
+        // std::cout << "pt_3d_h.at<float>(0) is: " << pt_3d_h.at<float>(1,15) << std::endl;
+        
         // for all epipolar lines
         // for (vector<cv::Vec3f>::const_iterator it= linesLeft.begin(); it!=linesLeft.end(); ++it) {
 
@@ -2718,6 +3224,7 @@ int main(int argc, char *argv[]) {
     // poseAryPublisher = nh.advertise<std_msgs::Int32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
     // poseAryPublisher = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
     poseDetectionPublisher = nh.advertise<rtpose_ros::Detection>(PUBLISH_DETECTION_NAME, 10);
+    cloudRGBPublisher = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(PUBLISH_3D_PCD_NAME, 1);
     
     // image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);
     message_filters::Subscriber<sensor_msgs::Image> left_image_sub(nh, RECEIVE_LEFT_IMG_TOPIC_NAME, 1);

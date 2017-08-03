@@ -31,7 +31,7 @@ set(CMAKE_CXX_FLAGS "-lpthread ${CMAKE_CXX_FLAGS}")
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  roscpp roslib std_msgs sensor_msgs image_transport cv_bridge genmsg
+  roscpp roslib std_msgs sensor_msgs geometry_msgs image_transport cv_bridge genmsg
 )
 
 set(CAFFE_INCLUDEDIR caffe_rtpose/include caffe_rtpose/distribute/include)
@@ -79,6 +79,7 @@ find_package(OpenCV REQUIRED)
 add_message_files(
   FILES
   Detection.msg
+  Observation.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -99,6 +100,7 @@ add_message_files(
 generate_messages(
   DEPENDENCIES
   std_msgs  # Or other packages containing msgs
+  geometry_msgs
 )
 
 ###################################
@@ -126,6 +128,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   message_generation
+  geometry_msgs
 )
 
 SET(CUDA_NVCC_FLAGS "-arch=sm_13" CACHE STRING "nvcc flags" FORCE)
@@ -159,6 +162,7 @@ catkin_package(
     roscpp
     rosconsole
     sensor_msgs
+    geometry_msgs
     opencv2
     cv_bridge
     image_transport

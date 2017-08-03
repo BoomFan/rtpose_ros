@@ -57,6 +57,8 @@
 #include <opencv2/calib3d/calib3d.hpp>
 #include <std_msgs/String.h>
 #include <sstream>
+#include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseArray.h>
 // ROS time_synchronizer for subscribing wultiple topics at the same time
 #include <message_filters/subscriber.h>
 #include <message_filters/time_synchronizer.h>
@@ -75,11 +77,13 @@
 
 // My own message type
 #include "rtpose_ros/Detection.h"
+#include "rtpose_ros/Observation.h"
 #include "Hungarian.h"
 
 // PCL includes
 #include <pcl_ros/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <cmath>
 
 // Flags (rtpose.bin --help)
 DEFINE_bool(fullscreen,             false,          "Run in fullscreen mode (press f during runtime to toggle)");
@@ -141,7 +145,10 @@ const std::string PUBLISH_RIGHT_IMG_TOPIC_NAME = "pose_estimate/image_right";
 // const std::string PUBLISH_ARY_TOPIC_NAME = "pose_estimate/ary";
 const std::string PUBLISH_DETECTION_NAME = "pose_estimate/detection";
 const std::string PUBLISH_3D_PCD_NAME = "pose_estimate/pcd";
+const std::string pose2d_pub_name = "/forecast/input";
 std::string camera_link_name = "camera_link";
+std::string poseArrayTopic_name = "/mappose_estimate/poseary";
+std::string poseArray_framename = "camera_link";
 
 cv::Mat final_img;
 image_transport::Publisher poseLeftImagePublisher;
@@ -151,6 +158,9 @@ std_msgs::Header header;
 // ros::Publisher poseAryPublisher;// To publish estimation array
 ros::Publisher poseDetectionPublisher;// To publish Detection of stareo images(customized message format)
 ros::Publisher cloudRGBPublisher;
+ros::Publisher pose2DPublisher;
+ros::Publisher posearray_pub;
+
 
 
 int display_counter = 1;
@@ -2487,32 +2497,32 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
 
         // Camera1 is the left camera, camera2 is thre right camera
         std::vector<cv::Vec<float,3>> epilines1, epilines2;
-        // cv::Mat points1 = cv::Mat(left_num*num_parts, 2, CV_32F);     //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format),  row major order
-        // cv::Mat points2 = cv::Mat(right_num*num_parts, 2, CV_32F);    //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format)
-        // float* mp1 = &points1.at<float>(0);
-        // float* mp2 = &points2.at<float>(0);
-        // // // Convert left image result to Nx2 matrix: points1
-        // for (int ip=0; ip<left_num; ip++) {
-        //     for (int ij=0;ij<num_parts;ij++) {
-        //         float x_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+0]);
-        //         float y_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+1]);
-        //         std::cout << "detect_result.left_data: "<< x_pixel << "," << y_pixel << std::endl;
-        //         // std::cout << "detect_result.left_data, float: "<< float(detect_result.left_data[ip*num_parts*3 + ij*3+0]) << std::endl;
-        //         // point1 is a Nx2 marix and data are stored in a row major order, which means points1.data[1] is the second number in the first row!!
-        //         mp1[(ip*num_parts+ij)*2] = float(x_pixel);          // x pixel 
-        //         mp1[(ip*num_parts+ij)*2 + 1] = float(y_pixel);      // y pixel 
-        //     }
-        // }
-        // // // Convert right image result to Nx2 matrix: points2
-        // for (int ip=0; ip<right_num; ip++) {
-        //     for (int ij=0;ij<num_parts;ij++) {
-        //         float x_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+0];
-        //         float y_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+1];
-        //         std::cout << "detect_result.right_data: "<< x_pixel << "," << y_pixel << std::endl;
-        //         mp2[(ip*num_parts+ij)*2] = float(x_pixel);         // x pixel 
-        //         mp2[(ip*num_parts+ij)*2 +1] = float(y_pixel);      // y pixel  
-        //     }
-        // }
+        cv::Mat points1 = cv::Mat(left_num*num_parts, 2, CV_32F);     //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format),  row major order
+        cv::Mat points2 = cv::Mat(right_num*num_parts, 2, CV_32F);    //like usual matrix, cv::Mat put rows first. such as cv::Mat(rows, cols, data_format)
+        float* mp1 = &points1.at<float>(0);
+        float* mp2 = &points2.at<float>(0);
+        // // Convert left image result to Nx2 matrix: points1
+        for (int ip=0; ip<left_num; ip++) {
+            for (int ij=0;ij<num_parts;ij++) {
+                float x_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+0]);
+                float y_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+1]);
+                std::cout << "detect_result.left_data: "<< x_pixel << "," << y_pixel << std::endl;
+                // std::cout << "detect_result.left_data, float: "<< float(detect_result.left_data[ip*num_parts*3 + ij*3+0]) << std::endl;
+                // point1 is a Nx2 marix and data are stored in a row major order, which means points1.data[1] is the second number in the first row!!
+                mp1[(ip*num_parts+ij)*2] = float(x_pixel);          // x pixel 
+                mp1[(ip*num_parts+ij)*2 + 1] = float(y_pixel);      // y pixel 
+            }
+        }
+        // // Convert right image result to Nx2 matrix: points2
+        for (int ip=0; ip<right_num; ip++) {
+            for (int ij=0;ij<num_parts;ij++) {
+                float x_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+0];
+                float y_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+1];
+                std::cout << "detect_result.right_data: "<< x_pixel << "," << y_pixel << std::endl;
+                mp2[(ip*num_parts+ij)*2] = float(x_pixel);         // x pixel 
+                mp2[(ip*num_parts+ij)*2 +1] = float(y_pixel);      // y pixel  
+            }
+        }
 
         // std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
         // std::cout << "points1.size() is: "<< points1.size() << std::endl;
@@ -2582,89 +2592,90 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
            // 589   261
            // 636   260
 
-        left_num = 1;
-        right_num = 1;
+        // left_num = 1;
+        // right_num = 1;
 
-        cv::Mat points1 = cv::Mat(18, 2, CV_32F);
-        float* mp1 = &points1.at<float>(0);
-        for (int ip=0; ip<1; ip++) {
-            mp1[0] = float(648);       // x pixel 
-            mp1[1] = float(263);      // y pixel 
-            mp1[2] = float(651);       // x pixel 
-            mp1[3] = float(310);      // y pixel 
-            mp1[4] = float(600);       // x pixel 
-            mp1[5] = float(310);      // y pixel 
-            mp1[6] = float(536);       // x pixel 
-            mp1[7] = float(292);      // y pixel 
-            mp1[8] = float(456);       // x pixel 
-            mp1[9] = float(264);      // y pixel 
-            mp1[10] = float(701);       // x pixel 
-            mp1[11] = float(309);      // y pixel 
-            mp1[12] = float(769);       // x pixel 
-            mp1[13] = float(292);      // y pixel 
-            mp1[14] = float(838);       // x pixel 
-            mp1[15] = float(271);      // y pixel 
-            mp1[16] = float(633);       // x pixel 
-            mp1[17] = float(454);      // y pixel 
-            mp1[18] = float(649);       // x pixel 
-            mp1[19] = float(568);      // y pixel 
-            mp1[20] = float(658);       // x pixel 
-            mp1[21] = float(675);      // y pixel 
-            mp1[22] = float(689);       // x pixel 
-            mp1[23] = float(441);      // y pixel 
-            mp1[24] = float(697);       // x pixel 
-            mp1[25] = float(483);      // y pixel 
-            mp1[26] = float(702);       // x pixel 
-            mp1[27] = float(579);      // y pixel 
-            mp1[28] = float(638);       // x pixel 
-            mp1[29] = float(255);      // y pixel 
-            mp1[30] = float(658);       // x pixel 
-            mp1[31] = float(255);      // y pixel 
-            mp1[32] = float(623);       // x pixel 
-            mp1[33] = float(260);      // y pixel 
-            mp1[34] = float(671);       // x pixel 
-            mp1[35] = float(259);      // y pixel 
-        }
-        cv::Mat points2 = cv::Mat(18, 2, CV_32F);
-        float* mp2 = &points2.at<float>(0);
-        for (int ip=0; ip<1; ip++) {
-            mp2[0] = float(610);       // x pixel 
-            mp2[1] = float(264);      // y pixel 
-            mp2[2] = float(615);       // x pixel 
-            mp2[3] = float(310);      // y pixel 
-            mp2[4] = float(565);       // x pixel 
-            mp2[5] = float(311);      // y pixel 
-            mp2[6] = float(500);       // x pixel 
-            mp2[7] = float(293);      // y pixel 
-            mp2[8] = float(418);       // x pixel 
-            mp2[9] = float(264);      // y pixel 
-            mp2[10] = float(665);       // x pixel 
-            mp2[11] = float(309);      // y pixel 
-            mp2[12] = float(734);       // x pixel 
-            mp2[13] = float(293);      // y pixel 
-            mp2[14] = float(801);       // x pixel 
-            mp2[15] = float(271);      // y pixel 
-            mp2[16] = float(598);       // x pixel 
-            mp2[17] = float(454);      // y pixel 
-            mp2[18] = float(613);       // x pixel 
-            mp2[19] = float(569);      // y pixel 
-            mp2[20] = float(623);       // x pixel 
-            mp2[21] = float(676);      // y pixel 
-            mp2[22] = float(652);       // x pixel 
-            mp2[23] = float(440);      // y pixel 
-            mp2[24] = float(654);       // x pixel 
-            mp2[25] = float(484);      // y pixel 
-            mp2[26] = float(663);       // x pixel 
-            mp2[27] = float(575);      // y pixel 
-            mp2[28] = float(600);       // x pixel 
-            mp2[29] = float(255);      // y pixel 
-            mp2[30] = float(620);       // x pixel 
-            mp2[31] = float(255);      // y pixel 
-            mp2[32] = float(589);       // x pixel 
-            mp2[33] = float(261);      // y pixel 
-            mp2[34] = float(636);       // x pixel 
-            mp2[35] = float(260);      // y pixel 
-        }
+        // cv::Mat points1 = cv::Mat(18, 2, CV_32F);
+        // float* mp1 = &points1.at<float>(0);
+        // for (int ip=0; ip<1; ip++) {
+        //     mp1[0] = float(648);       // x pixel 
+        //     mp1[1] = float(263);      // y pixel 
+        //     mp1[2] = float(651);       // x pixel 
+        //     mp1[3] = float(310);      // y pixel 
+        //     mp1[4] = float(600);       // x pixel 
+        //     mp1[5] = float(310);      // y pixel 
+        //     mp1[6] = float(536);       // x pixel 
+        //     mp1[7] = float(292);      // y pixel 
+        //     mp1[8] = float(456);       // x pixel 
+        //     mp1[9] = float(264);      // y pixel 
+        //     mp1[10] = float(701);       // x pixel 
+        //     mp1[11] = float(309);      // y pixel 
+        //     mp1[12] = float(769);       // x pixel 
+        //     mp1[13] = float(292);      // y pixel 
+        //     mp1[14] = float(838);       // x pixel 
+        //     mp1[15] = float(271);      // y pixel 
+        //     mp1[16] = float(633);       // x pixel 
+        //     mp1[17] = float(454);      // y pixel 
+        //     mp1[18] = float(649);       // x pixel 
+        //     mp1[19] = float(568);      // y pixel 
+        //     mp1[20] = float(658);       // x pixel 
+        //     mp1[21] = float(675);      // y pixel 
+        //     mp1[22] = float(689);       // x pixel 
+        //     mp1[23] = float(441);      // y pixel 
+        //     mp1[24] = float(697);       // x pixel 
+        //     mp1[25] = float(483);      // y pixel 
+        //     mp1[26] = float(702);       // x pixel 
+        //     mp1[27] = float(579);      // y pixel 
+        //     mp1[28] = float(638);       // x pixel 
+        //     mp1[29] = float(255);      // y pixel 
+        //     mp1[30] = float(658);       // x pixel 
+        //     mp1[31] = float(255);      // y pixel 
+        //     mp1[32] = float(623);       // x pixel 
+        //     mp1[33] = float(260);      // y pixel 
+        //     mp1[34] = float(671);       // x pixel 
+        //     mp1[35] = float(259);      // y pixel 
+        // }
+        // cv::Mat points2 = cv::Mat(18, 2, CV_32F);
+        // float* mp2 = &points2.at<float>(0);
+        // for (int ip=0; ip<1; ip++) {
+        //     mp2[0] = float(610);       // x pixel 
+        //     mp2[1] = float(264);      // y pixel 
+        //     mp2[2] = float(615);       // x pixel 
+        //     mp2[3] = float(310);      // y pixel 
+        //     mp2[4] = float(565);       // x pixel 
+        //     mp2[5] = float(311);      // y pixel 
+        //     mp2[6] = float(500);       // x pixel 
+        //     mp2[7] = float(293);      // y pixel 
+        //     mp2[8] = float(418);       // x pixel 
+        //     mp2[9] = float(264);      // y pixel 
+        //     mp2[10] = float(665);       // x pixel 
+        //     mp2[11] = float(309);      // y pixel 
+        //     mp2[12] = float(734);       // x pixel 
+        //     mp2[13] = float(293);      // y pixel 
+        //     mp2[14] = float(801);       // x pixel 
+        //     mp2[15] = float(271);      // y pixel 
+        //     mp2[16] = float(598);       // x pixel 
+        //     mp2[17] = float(454);      // y pixel 
+        //     mp2[18] = float(613);       // x pixel 
+        //     mp2[19] = float(569);      // y pixel 
+        //     mp2[20] = float(623);       // x pixel 
+        //     mp2[21] = float(676);      // y pixel 
+        //     mp2[22] = float(652);       // x pixel 
+        //     mp2[23] = float(440);      // y pixel 
+        //     mp2[24] = float(654);       // x pixel 
+        //     mp2[25] = float(484);      // y pixel 
+        //     mp2[26] = float(663);       // x pixel 
+        //     mp2[27] = float(575);      // y pixel 
+        //     mp2[28] = float(600);       // x pixel 
+        //     mp2[29] = float(255);      // y pixel 
+        //     mp2[30] = float(620);       // x pixel 
+        //     mp2[31] = float(255);      // y pixel 
+        //     mp2[32] = float(589);       // x pixel 
+        //     mp2[33] = float(261);      // y pixel 
+        //     mp2[34] = float(636);       // x pixel 
+        //     mp2[35] = float(260);      // y pixel 
+        // }
+        // I think I still need a vector to remember the useful pair!!!!!!!!!!!!!!!
         ///////////////////// For debugging ///////////////////////////////////
         compute_epilines(points1, 1, Fund_matrix, epilines1);  // input is pts on the left image, output is the correspond epilines on the right image
         // std::cout << "epilines1.size() is: "<< epilines1.size() << std::endl;
@@ -2680,11 +2691,11 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     // std::cout << "points2 is: "<< points2.at<float>(2*k) << "," << points2.at<float>(2*k+1) << std::endl;
                     if (points1.at<float>(2*(il*num_parts+k))>0 && points1.at<float>(2*(il*num_parts+k)+1)>0 
                         && points2.at<float>(2*(ir*num_parts+k))>0 && points2.at<float>(2*(ir*num_parts+k)+1)>0){
-                        std::cout << "points1 is: "<< points1.at<float>(2*(il*num_parts+k)) << "," << points1.at<float>(2*(il*num_parts+k)+1) << std::endl;
-                        std::cout << "epilines1["<< il*num_parts+k <<"] is: "<< epilines1[il*num_parts+k] << std::endl;
-                        std::cout << "points2 is: "<< points2.at<float>(2*(ir*num_parts+k)) << "," << points2.at<float>(2*(ir*num_parts+k)+1) << std::endl;
+                        // std::cout << "points1 is: "<< points1.at<float>(2*(il*num_parts+k)) << "," << points1.at<float>(2*(il*num_parts+k)+1) << std::endl;
+                        // std::cout << "epilines1["<< il*num_parts+k <<"] is: "<< epilines1[il*num_parts+k] << std::endl;
+                        // std::cout << "points2 is: "<< points2.at<float>(2*(ir*num_parts+k)) << "," << points2.at<float>(2*(ir*num_parts+k)+1) << std::endl;
                         float now_cost = abs(points2.at<float>(2*(ir*num_parts+k))*epilines1[il*num_parts+k][0] + points2.at<float>(2*(ir*num_parts+k)+1)*epilines1[il*num_parts+k][1] + epilines1[il*num_parts+k][2]);
-                        std::cout << "for epiline ["<< il*num_parts+k <<"], cost is: "<< now_cost << std::endl;
+                        // std::cout << "for epiline ["<< il*num_parts+k <<"], cost is: "<< now_cost << std::endl;
                         cost = cost + now_cost;
                         useful_num++;
                     }
@@ -2743,35 +2754,43 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
 
         // Now, rearrange the detection results to two new Mat variables "points1_new" and "points2_new", and only keep the associated data
         double cost_of_non_assignment = 2;
-        int useful_pair = 0;
+        int useful_pair_num = 0;
         vector<int> useful_left_index;
         for (unsigned int x = 0; x <left_num; x++){
             if(x<left_num && assignment[x]<right_num && costMatrix[x][assignment[x]]<cost_of_non_assignment){
-                useful_pair++;
+                useful_pair_num++;
                 useful_left_index.push_back(x);
                 std::cout << "assignment : " << x << "," << assignment[x] << std::endl;
             }
             
         }
-        if(useful_pair == 0){
+        if(useful_pair_num == 0){
             // consider a situation that all elements in the cost_matrix are infinity, which means no useful pairing result.
             // In this case, we should just jump out of this function.
             return;
         }
 
         // For cv::triangulatePoints, rows have to be == 2 of the input points.
-        cv::Mat points1_new = cv::Mat(2, useful_pair*num_parts, CV_32F);
+        cv::Mat points1_new = cv::Mat(2, useful_pair_num*num_parts, CV_32F);
         float* mp1_new = &points1_new.at<float>(0);
-        cv::Mat points2_new = cv::Mat(2, useful_pair*num_parts, CV_32F);
+        cv::Mat points2_new = cv::Mat(2, useful_pair_num*num_parts, CV_32F);
         float* mp2_new = &points2_new.at<float>(0);
-        for (int i = 0; i < useful_pair; i++){
+        vector<bool> pairable;
+        for (int i = 0; i < useful_pair_num; i++){
             for (int ip=0; ip<num_parts; ip++) {
-                mp1_new[i*num_parts + ip] = mp1[useful_left_index[i]*num_parts + 2*ip];
-                mp1_new[useful_pair*num_parts + i*num_parts + ip] = mp1[useful_left_index[i]*num_parts + 2*ip + 1];
-                mp2_new[i*num_parts + ip] = mp2[assignment[i]*num_parts + 2*ip];
-                mp2_new[useful_pair*num_parts + i*num_parts + ip] = mp2[assignment[i]*num_parts + 2*ip + 1];
+                mp1_new[i*num_parts + ip] = mp1[2*useful_left_index[i]*num_parts + 2*ip];
+                mp1_new[useful_pair_num*num_parts + i*num_parts + ip] = mp1[2*useful_left_index[i]*num_parts + 2*ip + 1];
+                mp2_new[i*num_parts + ip] = mp2[2*assignment[i]*num_parts + 2*ip];
+                mp2_new[useful_pair_num*num_parts + i*num_parts + ip] = mp2[2*assignment[i]*num_parts + 2*ip + 1];
                 std::cout << "mp1_new[" << i*num_parts + ip<< "] is :"<< mp1_new[i*num_parts + ip]  << std::endl;
-                std::cout << "mp1_new[" << useful_pair*num_parts + i*num_parts + ip<< "] is :"<< mp1_new[useful_pair*num_parts + i*num_parts + ip]  << std::endl;
+                std::cout << "mp1_new[" << useful_pair_num*num_parts + i*num_parts + ip<< "] is :"<< mp1_new[useful_pair_num*num_parts + i*num_parts + ip]  << std::endl;
+                if (mp1_new[i*num_parts + ip]>0 && mp1_new[useful_pair_num*num_parts + i*num_parts + ip]>0 
+                    && mp2_new[i*num_parts + ip]>0 && mp2_new[useful_pair_num*num_parts + i*num_parts + ip]>0){
+                    pairable.push_back(true);
+                }
+                else{
+                    pairable.push_back(false);
+                }
             }
         }
 
@@ -2787,7 +2806,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
         cout << "Camera_P0\n" << Camera_P1 << endl;
         cout << "points1_new\n" << points1_new << endl;
         cout << "points2_new\n" << points2_new << endl;
-        cv::Mat pt_3d_h(4,useful_pair,CV_32FC1);
+        cv::Mat pt_3d_h(4,useful_pair_num,CV_32FC1);
 
         cv::triangulatePoints(Camera_P1, Camera_P2, points1_new, points2_new, pt_3d_h);
         // Since the triangulation uses a SVD to compute the solution, the points in pt_3d_h are normalized to unit vectors.
@@ -2798,10 +2817,10 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
         // std::cout << "pt_3d is: " << pt_3d << std::endl;
 
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_3d(new pcl::PointCloud<pcl::PointXYZRGB>);
-        for (int i=0; i<useful_pair; i++) {
+        for (int i=0; i<useful_pair_num; i++) {
             // push back each joint
             for (int j=0; j<num_parts; j++){
-                if(mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0){
+                if(pairable[i*num_parts + j]){//mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair_num*num_parts + i*num_parts + j]>0 && mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair_num*num_parts + i*num_parts + j]>0
                     pcl::PointXYZRGB point;
                     point.r = 255;
                     point.g = 255;
@@ -2809,8 +2828,14 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     point.y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000; //Unmornalize and then convert from mm to meter
                     point.z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000; //Unmornalize and then convert from mm to meter
                     point.x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000; //Unmornalize and then convert from mm to meter
-                    std::cout << "point is: " << point << std::endl;
-                    cloud_3d->points.push_back (point);
+                    if (point.x<0){
+                        pairable[i*num_parts + j] = false;
+                    }
+                    else{
+                        std::cout << "point is: " << point << std::endl;
+                        cloud_3d->points.push_back (point);
+                    }
+                    
                 }
             }
             // create pointclouds for limbs if it is detected
@@ -2819,11 +2844,12 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                 float start_x, start_y, start_z;
                 float end_x, end_y, end_z;
                 int pt_in_line = 10;
+                // {{0,  "Nose"}, {1,  "Neck"}, {2,  "RShoulder"}, {3,  "RElbow"}, {4,  "RWrist"},
+                // {5,  "LShoulder"}, {6,  "LElbow"}, {7,  "LWrist"}, {8,  "RHip"}, {9,  "RKnee"},
+                // {10, "RAnkle"}, {11, "LHip"}, {12, "LKnee"}, {13, "LAnkle"}, {14, "REye"},
+                // {15, "LEye"}, {16, "REar"}, {17, "LEar"}, {18, "Bkg"}},
                 // Connect Nose to Neck
-                if(j==0 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==0 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2841,10 +2867,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect Neck to RShoulder
-                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==1 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2862,10 +2885,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect RShoulder to RElbow
-                if(j==2 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==2 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2883,10 +2903,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect RElbow to RWrist
-                if(j==3 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==3 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2904,10 +2921,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect Neck to LShoulder
-                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 4]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 4]>0 && 
-                    mp2_new[i*num_parts + j + 4]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 4]>0){
+                if(j==1 && pairable[i*num_parts + j] && pairable[i*num_parts + j + 4]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2925,10 +2939,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect LShoulder to LElbow
-                if(j==5 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==5 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2946,10 +2957,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect LElbow to LWrist
-                if(j==6 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==6 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2967,10 +2975,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect Neck to RHip
-                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 7]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 7]>0 && 
-                    mp2_new[i*num_parts + j + 7]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 7]>0){
+                if(j==1 && pairable[i*num_parts + j] && pairable[i*num_parts + j + 7]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -2988,10 +2993,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect RHip to RKnee
-                if(j==8 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==8 && pairable[i*num_parts + j] && pairable[i*num_parts + j + 1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3009,10 +3011,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect RKnee to RAnkle
-                if(j==9 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==9 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3030,10 +3029,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect Neck to LHip
-                if(j==1 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 10]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 10]>0 && 
-                    mp2_new[i*num_parts + j + 10]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 10]>0){
+                if(j==1 && pairable[i*num_parts + j] && pairable[i*num_parts + j +10]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3051,10 +3047,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect LHip to LKnee
-                if(j==11 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==11 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3072,10 +3065,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect LKnee to LAnkle
-                if(j==12 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 1]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 1]>0 && 
-                    mp2_new[i*num_parts + j + 1]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 1]>0){
+                if(j==12 && pairable[i*num_parts + j] && pairable[i*num_parts + j +1]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3093,10 +3083,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect Nose to REye
-                if(j==0 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j +14]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j +14]>0 && 
-                    mp2_new[i*num_parts + j +14]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j +14]>0){
+                if(j==0 && pairable[i*num_parts + j] && pairable[i*num_parts + j +14]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3114,10 +3101,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect Nose to LEye
-                if(j==0 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j + 15]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j + 15]>0 && 
-                    mp2_new[i*num_parts + j + 15]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j + 15]>0){
+                if(j==0 && pairable[i*num_parts + j] && pairable[i*num_parts + j +15]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3135,10 +3119,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect REye to REar
-                if(j==14 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j +2]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j +2]>0 && 
-                    mp2_new[i*num_parts + j +2]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j +2]>0){
+                if(j==14 && pairable[i*num_parts + j] && pairable[i*num_parts + j +2]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3156,10 +3137,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                     }
                 }
                 // Connect LEye to LEar
-                if(j==15 && mp1_new[i*num_parts + j]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j]>0 && 
-                    mp2_new[i*num_parts + j]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j]>0 &&
-                    mp1_new[i*num_parts + j +2]>0 && mp1_new[useful_pair*num_parts + i*num_parts + j +2]>0 && 
-                    mp2_new[i*num_parts + j +2]>0 && mp2_new[useful_pair*num_parts + i*num_parts + j +2]>0){
+                if(j==15 && pairable[i*num_parts + j] && pairable[i*num_parts + j +2]){
                     start_x = pt_3d_h.at<float>(2,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_y = -pt_3d_h.at<float>(0,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
                     start_z = -pt_3d_h.at<float>(1,i*num_parts + j)/pt_3d_h.at<float>(3,i*num_parts + j)/1000;
@@ -3182,6 +3160,189 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
         pcl_conversions::toPCL(now, cloud_3d->header.stamp);
         cloud_3d->header.frame_id = camera_link_name;
         cloudRGBPublisher.publish(*cloud_3d);
+        
+        rtpose_ros::Observation obs; //Obs is a customized msg format
+        geometry_msgs::PoseArray poseArray; // poseArray is used for drawing arrows in Rviz
+        poseArray.header.stamp = ros::Time::now();
+        poseArray.header.frame_id = poseArray_framename;
+
+        // Now try to find an orientation of each pedestrian and publish their orientations into several Pose2D msg
+        for (int i=0; i<useful_pair_num; i++) {
+            
+            geometry_msgs::Pose2D state; // state is a subset of Obs
+
+            // Now consider orientation by detecting shoulders
+            double orient_x;
+            double orient_y;
+            double orient_z;
+            double rshoulder_x;
+            double rshoulder_y;
+            double rshoulder_z;
+            double dist_rshoulder;
+            double lshoulder_x;
+            double lshoulder_y;
+            double lshoulder_z;
+            double dist_lshoulder;
+            double orient_length;
+            // Case 1, no shoulder is detected. I have another thought that we should try to see if thighs are detected. But I'll just leave it here for the moment.
+            if (!pairable[i*num_parts + 2] && !pairable[i*num_parts + 5]){
+                continue;
+            }
+            // Case 2, only right shoulder has been detected
+            if (!pairable[i*num_parts + 2] && pairable[i*num_parts + 5]){
+                // We Pre-assume that the orientation is only right, i.e. [1,0,0]
+                orient_x = 1;
+                orient_y = 0;
+                orient_z = 0;
+            }
+            // Case 3, only left shoulder has been detected
+            else if (pairable[i*num_parts + 2] && !pairable[i*num_parts + 5]){
+                // We Pre-assume that the orientation is only right, i.e. [1,0,0]
+                orient_x = -1;
+                orient_y = 0;
+                orient_z = 0;
+            }
+            // Case 4, both shoulders are detected
+            if (pairable[i*num_parts + 2] && pairable[i*num_parts + 5]){
+                rshoulder_y = -pt_3d_h.at<float>(0,i*num_parts + 2)/pt_3d_h.at<float>(3,i*num_parts + 2)/1000; //Unmornalize and then convert from mm to meter
+                rshoulder_z = -pt_3d_h.at<float>(1,i*num_parts + 2)/pt_3d_h.at<float>(3,i*num_parts + 2)/1000; //Unmornalize and then convert from mm to meter
+                rshoulder_x = pt_3d_h.at<float>(2,i*num_parts + 2)/pt_3d_h.at<float>(3,i*num_parts + 2)/1000; //Unmornalize and then convert from mm to meter
+                dist_rshoulder = pow(rshoulder_x,2)+pow(rshoulder_y,2)+pow(rshoulder_z,2);
+                lshoulder_y = -pt_3d_h.at<float>(0,i*num_parts + 5)/pt_3d_h.at<float>(3,i*num_parts + 5)/1000; //Unmornalize and then convert from mm to meter
+                lshoulder_z = -pt_3d_h.at<float>(1,i*num_parts + 5)/pt_3d_h.at<float>(3,i*num_parts + 5)/1000; //Unmornalize and then convert from mm to meter
+                lshoulder_x = pt_3d_h.at<float>(2,i*num_parts + 5)/pt_3d_h.at<float>(3,i*num_parts + 5)/1000; //Unmornalize and then convert from mm to meter
+                dist_lshoulder = pow(lshoulder_x,2)+pow(lshoulder_y,2)+pow(lshoulder_z,2);
+
+                orient_x = -(rshoulder_y - lshoulder_y);
+                orient_y = rshoulder_x - lshoulder_x;
+                orient_length = sqrt(pow(orient_x,2)+ pow(orient_y,2));
+                orient_x = orient_x/orient_length;
+                orient_y = orient_y/orient_length;
+
+        //         rshoulder_x = -float(rshoulder_xyzb[0])
+        //         rshoulder_y = -float(rshoulder_xyzb[1])
+        //         rshoulder_z = float(rshoulder_xyzb[2])
+        //         dist_rshoulder = math.pow(rshoulder_x,2)+math.pow(rshoulder_y,2)+math.pow(rshoulder_z,2)
+                // ...... unfinished 
+            }
+            state.y = -pt_3d_h.at<float>(0,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
+            state.x = pt_3d_h.at<float>(2,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
+            state.theta = atan2(orient_y,orient_x);
+            obs.poses.push_back(state);
+            obs.time = ros::Time::now().toSec();
+
+            geometry_msgs::Pose somePose;
+            somePose.position.y = -pt_3d_h.at<float>(0,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
+            somePose.position.z = -pt_3d_h.at<float>(1,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
+            somePose.position.x = pt_3d_h.at<float>(2,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
+            double theta = state.theta;
+            somePose.orientation.x = 0;
+            somePose.orientation.y = 0;
+            somePose.orientation.z = sin(theta/2);
+            somePose.orientation.w = cos(theta/2);
+            poseArray.poses.push_back(somePose);
+        }
+        pose2DPublisher.publish(obs); // Publish a customized format massage to Owen's code.
+        posearray_pub.publish(poseArray); //publish an arrow that RVIZ reads.
+
+
+        //     # 
+        //     if rshoulderindex_x != 0 and lshoulderindex_x != 0: 
+        //         # calculate the corresponding rshoulder point in FOTONIC sequence
+        //         # rshoulderindex_x,rshoulderindex_y = zed2fotonic_pixel(rshoulderindex_x,rshoulderindex_y)
+        //         # Plot rshoulder into blue if rshoulder is inside fotonic view
+        //         if rshoulderindex_x<pcd_img_width-1 and rshoulderindex_x>1 and rshoulderindex_y<pcd_img_height-1 and rshoulderindex_y>1 and draw_on_fotonic_image:
+        //             self.cv_image[rshoulderindex_y,rshoulderindex_x,:] = (0,0,255) # (r,g,b)
+        //             self.cv_image[rshoulderindex_y-1,rshoulderindex_x,:] = (0,0,255) # (r,g,b)
+        //             self.cv_image[rshoulderindex_y+1,rshoulderindex_x,:] = (0,0,255) # (r,g,b)
+        //             self.cv_image[rshoulderindex_y,rshoulderindex_x-1,:] = (0,0,255) # (r,g,b)
+        //             self.cv_image[rshoulderindex_y,rshoulderindex_x+1,:] = (0,0,255) # (r,g,b)
+        //         flipped_x = rshoulderindex_x
+        //         flipped_y = pcd_img_height-rshoulderindex_y
+        //         rshoulder_xyzb = int_data[flipped_y*pcd_fotonic.width+flipped_x]
+        //         rshoulder_x = -float(rshoulder_xyzb[0])
+        //         rshoulder_y = -float(rshoulder_xyzb[1])
+        //         rshoulder_z = float(rshoulder_xyzb[2])
+        //         dist_rshoulder = math.pow(rshoulder_x,2)+math.pow(rshoulder_y,2)+math.pow(rshoulder_z,2)
+
+        //         # calculate the corresponding lshoulder point in FOTONIC sequence
+        //         # lshoulderindex_x,lshoulderindex_y = zed2fotonic_pixel(lshoulderindex_x,lshoulderindex_y)
+        //         # Plot lshoulder into green if lshoulder is inside fotonic view
+        //         if lshoulderindex_x<pcd_img_width-1 and lshoulderindex_x>1 and lshoulderindex_y<pcd_img_height-1 and lshoulderindex_y>1 and draw_on_fotonic_image:
+        //             self.cv_image[lshoulderindex_y,lshoulderindex_x,:] = (0,255,0) # (r,g,b)
+        //             self.cv_image[lshoulderindex_y-1,lshoulderindex_x,:] = (0,255,0) # (r,g,b)
+        //             self.cv_image[lshoulderindex_y+1,lshoulderindex_x,:] = (0,255,0) # (r,g,b)
+        //             self.cv_image[lshoulderindex_y,lshoulderindex_x-1,:] = (0,255,0) # (r,g,b)
+        //             self.cv_image[lshoulderindex_y,lshoulderindex_x+1,:] = (0,255,0) # (r,g,b)
+        //         flipped_x = lshoulderindex_x
+        //         flipped_y = pcd_img_height-lshoulderindex_y
+        //         lshoulder_xyzb = int_data[flipped_y*pcd_fotonic.width+flipped_x]
+        //         lshoulder_x = -float(lshoulder_xyzb[0])
+        //         lshoulder_y = -float(lshoulder_xyzb[1])
+        //         lshoulder_z = float(lshoulder_xyzb[2])
+        //         dist_lshoulder = math.pow(lshoulder_x,2)+math.pow(lshoulder_y,2)+math.pow(lshoulder_z,2)
+
+        //         # make sure point is valid
+        //         if lshoulder_y!=0 and rshoulder_y!=0 :
+        //             # Decide whether left or right shoulder is closer to camera
+        //             if dist_lshoulder < dist_rshoulder:
+        //                 orient_x_temp = -(neck_y - lshoulder_y)
+        //                 orient_y_temp = neck_x - lshoulder_x
+        //                 # orient_x_temp = -(rshoulder_y - lshoulder_y)
+        //                 # orient_y_temp = rshoulder_x - lshoulder_x
+              
+        //             else:
+        //                 orient_x_temp = -(rshoulder_y - neck_y)
+        //                 orient_y_temp = rshoulder_x - neck_x
+        //                 # orient_x_temp = -(rshoulder_y - lshoulder_y)
+        //                 # orient_y_temp = rshoulder_x - lshoulder_x
+        //         else :
+        //             print("Invalid point.")
+        //             continue
+
+        //         # print("orient_x_temp is",orient_x_temp)
+        //         # print("orient_y_temp is",orient_y_temp)
+        //         orient_z = 0
+        //         # If shoulders are too close to each other, we could not decide the orientation
+
+
+        //         # If the pedestrian is far and facing perpendicular to the segway, which means shoulders are too close to the neck
+        //         if math.fabs(rshoulderindex_x-neckindex_x) < 3 or math.fabs(lshoulderindex_x-neckindex_x) < 3:
+        //             # Make sure nose is detected
+        //             if noseindex_x!=0 and noseindex_y!=0:
+        //                 print("Shoulders are too close.")
+        //                 if noseindex_x<neckindex_x :
+        //                     orient_x = -1
+        //                     orient_y = 0
+        //                     orient_z = 0
+        //                     print("This person is facing left.")
+        //                 else:
+        //                     orient_x = 1
+        //                     orient_y = 0
+        //                     orient_z = 0
+        //                     print("This person is facing right.")
+        //         else:
+        //             orient_length = math.sqrt(math.pow(orient_x_temp,2)+math.pow(orient_y_temp,2)+math.pow(orient_z,2))
+        //             # Only append map_pose if we actually detected shoulders
+        //             if orient_length<0.4: # orient_length now is the distance between shoulder to neck
+        //                 orient_x = orient_x_temp/orient_length
+        //                 orient_y = orient_y_temp/orient_length
+        //                 orient_z = 0
+        //             print("Distance between shoulder to neck is", orient_length)
+
+        //         print("rshoulder_x,y,z is",rshoulder_x,"\t",rshoulder_y,"\t",rshoulder_z)
+        //         print("neck_x,y,z is",neck_x,"\t",neck_y,"\t",neck_z)
+        //         print("lshoulder_x,y,z is",lshoulder_x,"\t",lshoulder_y,"\t",lshoulder_z)
+
+        //     map_pose = np.append(map_pose,[pose3d_x,pose3d_y,pose3d_z,orient_x,orient_y,orient_z])
+        //     print("map_pose is: ",map_pose)
+
+
+
+
+
+
+
 
 
 
@@ -3238,6 +3399,8 @@ int main(int argc, char *argv[]) {
     // poseAryPublisher = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_ARY_TOPIC_NAME, 100);
     poseDetectionPublisher = nh.advertise<rtpose_ros::Detection>(PUBLISH_DETECTION_NAME, 10);
     cloudRGBPublisher = nh.advertise<pcl::PointCloud<pcl::PointXYZRGB> >(PUBLISH_3D_PCD_NAME, 1);
+    pose2DPublisher = nh.advertise<rtpose_ros::Observation>(pose2d_pub_name, 1);
+    posearray_pub = nh.advertise<geometry_msgs::PoseArray>(poseArrayTopic_name, 1);
     
     // image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);
     message_filters::Subscriber<sensor_msgs::Image> left_image_sub(nh, RECEIVE_LEFT_IMG_TOPIC_NAME, 1);

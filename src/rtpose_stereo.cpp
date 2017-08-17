@@ -2794,14 +2794,27 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
             }
         }
 
+        
+        // cv::Mat_<double> Camera_P1 = (cv::Mat_<double>(3,4) <<
+        //                 669.0622,   0,              677.9941,       0,
+        //                 0,          669.0140,       361.2724,       0,
+        //                 0,          0,              1,              0);
+        // cv::Mat_<double> Camera_P2 = (cv::Mat_<double>(3,4) <<
+        //                 670.1632298,1.2470508,      6.762432090424326e+02,      -8.065791024010150e+04,
+        //                 0.8807893,  668.52436137,   3.611070472550634e+02,      -3.046998430787702e+02,
+        //                 0.00325779, 0.0014024390,   1,                          -0.815933154416481);
+
+        // New calibration Parameters
+        // P1 = stereoParams.CameraParameters1.IntrinsicMatrix';
+        // P2 = K2*[R2|T2] = transpose([stereoParams.RotationOfCamera2;stereoParams.TranslationOfCamera2]*stereoParams.CameraParameters2.IntrinsicMatrix);
         cv::Mat_<double> Camera_P1 = (cv::Mat_<double>(3,4) <<
-                        669.0622,   0,              677.9941,       0,
-                        0,          669.0140,       361.2724,       0,
+                        686.826046442950,   0,              617.804580374194,       0,
+                        0,          685.679516623257,       367.079117165697,       0,
                         0,          0,              1,              0);
         cv::Mat_<double> Camera_P2 = (cv::Mat_<double>(3,4) <<
-                        670.1632298,1.2470508,      6.762432090424326e+02,      -8.065791024010150e+04,
-                        0.8807893,  668.52436137,   3.611070472550634e+02,      -3.046998430787702e+02,
-                        0.00325779, 0.0014024390,   1,                          -0.815933154416481);
+                        6.876745414456740e+02,  1.627037321331594,          6.149087948286444e+02,      -8.278975050032434e+04,
+                        0.568683184255626,      6.862260202986158e+02,      3.669708775317395e+02,      41.300045426985930,
+                        0.001807530056100,      0.002486775876403,          1,                          0.057181250835122);
         // cout << "P1\n" << cv::Mat(Camera_P0) << endl;
         cout << "Camera_P0\n" << Camera_P1 << endl;
         cout << "points1_new\n" << points1_new << endl;

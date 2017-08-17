@@ -93,7 +93,7 @@ DEFINE_string(net_resolution,       "160x128",      "Multiples of 16.");
 // DEFINE_string(camera_resolution,    "1920x1080",     "Size of the camera frames to ask for.");// For ubs_cam
 DEFINE_string(camera_resolution,    "160x120",     "Size of the camera frames to ask for.");// For ZED camera
 DEFINE_int32(start_device,          0,              "GPU device start number.");
-DEFINE_int32(num_gpu,               2,              "The number of GPU devices to use.");
+DEFINE_int32(num_gpu,               1,              "The number of GPU devices to use.");
 DEFINE_double(start_scale,          1,              "Initial scale. Must cv::Match net_resolution");
 DEFINE_double(scale_gap,            0.3,            "Scale gap between scales. No effect unless num_scales>1");
 DEFINE_int32(num_scales,            1,              "Number of scales to average");
@@ -115,7 +115,7 @@ std::string PERSON_DETECTOR_PROTO;      //person detector
 std::string POSE_ESTIMATOR_PROTO;       //pose estimator
 const auto MAX_PEOPLE = RENDER_MAX_PEOPLE;  // defined in render_functions.hpp
 const auto BOX_SIZE = 368;
-const auto BUFFER_SIZE = 4;    //affects latency
+const auto BUFFER_SIZE = 0;    //affects latency, default is 4.
 const auto MAX_NUM_PARTS = 70;
 
 // Start ---------- My own define ----------Fan Bu
@@ -134,6 +134,9 @@ ros::Publisher poseAryPublisher;// To publish estimation array
 
 int display_counter = 1;
 double last_pop_time;
+
+// Flags for processing
+vector<bool> processing;
 // End ------------- My own define ---------Fan Bu
 
 // global queues for I/O
@@ -603,23 +606,47 @@ void* getFrameFromCam(void *i) {
 }
 
 void getFrameFromROS(const sensor_msgs::ImageConstPtr& msg) {
-    double getrostime;
-    getrostime = get_wall_time();
-    cv::Mat img;
-    cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
-    printf("Received one new Image.\n");
-    //cv::imwrite("rgb.png", cv_ptr->image);
-    //cv::Mat img = cv_ptr->image;
-    img = cv_ptr->image;
-    double target_frame_time = 0;
-    double target_frame_rate = 0;
+    ROS_INFO("Into getFrameFromROS()");
+    bool available = false;
+    int gpu = 0;
 
-    int global_counter = 1;
-    int frame_counter = 0;
-    cv::Mat image_uchar;
-    cv::Mat image_uchar_orig;
-    cv::Mat image_uchar_prev;
-    double last_frame_time = -1;
+    // ROS_INFO("NUM_GPU is %i", NUM_GPU);
+    // while(gpu < NUM_GPU){
+    //     ROS_INFO("processing.size() is %li", processing.size());
+    //     ROS_INFO("processing [%i] is %s", gpu, processing[gpu] ? "true" : "false");
+    //     gpu++;
+    // }
+    // gpu = 0;
+
+    while(gpu < NUM_GPU){
+        if(processing[gpu] == false){
+            available = true;
+        }
+        if(available == true){
+            break;
+        }
+        gpu++;
+    }
+
+    if(available){
+        processing[gpu] = true;
+        double getrostime;
+        getrostime = get_wall_time();
+        cv::Mat img;
+        cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
+        printf("Received one new Image.\n");
+        //cv::imwrite("rgb.png", cv_ptr->image);
+        //cv::Mat img = cv_ptr->image;
+        img = cv_ptr->image;
+        double target_frame_time = 0;
+        double target_frame_rate = 0;
+
+        int global_counter = 1;
+        int frame_counter = 0;
+        cv::Mat image_uchar;
+        cv::Mat image_uchar_orig;
+        cv::Mat image_uchar_prev;
+        double last_frame_time = -1;
 
 
         image_uchar_orig = img;
@@ -677,7 +704,14 @@ void getFrameFromROS(const sensor_msgs::ImageConstPtr& msg) {
         frame.preprocessed_time = get_wall_time();
 
         global.input_queue.push(frame);
-    cout<< "getFrameFromROS take : " <<get_wall_time()-getrostime<<" seconds"<< endl;
+        cout<< "getFrameFromROS take : " <<get_wall_time()-getrostime<<" seconds"<< endl;
+    }
+
+    // gpu = 0;
+    // while(gpu < NUM_GPU){
+    //     ROS_INFO("processing [%i] is %s", gpu, processing[gpu] ? "true" : "false");
+    //     gpu++;
+    // }
 
     // return nullptr;
 }
@@ -1235,7 +1269,10 @@ void* processFrame(void *i) {
 
     caffe::NmsLayer<float> *nms_layer = (caffe::NmsLayer<float>*)net_copies[tid].person_net->layer_by_name("nms").get();
     // printf("check point 6\n");
-
+    ROS_INFO("processing.size() is %li", processing.size());
+    ROS_INFO("processing[%i] is %s", tid, processing[tid] ? "true" : "false");
+    processing[tid] = false;
+    ROS_INFO("processing[%i] is %s", tid, processing[tid] ? "true" : "false");
     //while(!empty) {
     while(1) {
         double processFrametime;
@@ -1253,10 +1290,12 @@ void* processFrame(void *i) {
                 frame.gpu_fetched_time = get_wall_time();
                 double elaspsed_time = frame.gpu_fetched_time - frame.commit_time;
                 //LOG(ERROR) << "frame " << frame.index << " is copied to GPU after " << elaspsed_time << " sec";
+                ROS_INFO("elaspsed_time is %f", elaspsed_time);
                 if (elaspsed_time > 0.1
                    && !FLAGS_no_frame_drops) {//0.1*BATCH_SIZE) { //0.1*BATCH_SIZE
                     //drop frame
-                    VLOG(1) << "skip frame " << frame.index;
+                    // VLOG(1) << "skip frame " << frame.index;
+                    ROS_INFO("skip frame %i", frame.index);
                     delete [] frame.data;
                     delete [] frame.data_for_mat;
                     delete [] frame.data_for_wrap;
@@ -1349,6 +1388,8 @@ void* processFrame(void *i) {
         // printf("check point 10\n");
         cout<< "processFrame takes : " <<get_wall_time()-processFrametime<<" seconds"<< endl;
 
+        processing[tid] = false;
+
     }
     return nullptr;
 }
@@ -1373,8 +1414,10 @@ void* buffer_and_order(void* threadargs) { //only one thread can execute this
         frame.buffer_start_time = get_wall_time();
         if (success) {
             VLOG(4) << "buffer getting " << frame.index << ", waiting for " << frame_waited;
+            ROS_INFO("buffer getting %i, waiting for %i", frame.index, frame_waited);
             std::unique_lock<std::mutex> lock{global.mutex};
             while(global.dropped_index.size()!=0 && global.dropped_index.top() == frame_waited) {
+                ROS_INFO("global.dropped_index.size() = %li, global.dropped_index.top() %i", global.dropped_index.size(), global.dropped_index.top());
                 frame_waited++;
                 global.dropped_index.pop();
             }
@@ -1611,7 +1654,7 @@ void publishImgToROS(const cv::Mat wrap_frame)  {
     poseImagePublisher.publish(output);
 }
 
-void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
+void displayROSFrame() { // const sensor_msgs::ImageConstPtr& msg) { //single thread
     double displayROSFrametime;
     displayROSFrametime = get_wall_time();
     Frame frame;
@@ -1626,170 +1669,174 @@ void displayROSFrame(const sensor_msgs::ImageConstPtr& msg) { //single thread
     array.data.clear();
 
             
-        if (global.output_queue_ordered.try_pop(&frame)) {
-            
-            // frame = global.output_queue_ordered.pop();
-            double tic = get_wall_time();
-            cv::Mat wrap_frame(DISPLAY_RESOLUTION_HEIGHT, DISPLAY_RESOLUTION_WIDTH, CV_8UC3, frame.data_for_wrap);
+    if (global.output_queue_ordered.try_pop(&frame)) {
+        
+        // frame = global.output_queue_ordered.pop();
+        double tic = get_wall_time();
+        cv::Mat wrap_frame(DISPLAY_RESOLUTION_HEIGHT, DISPLAY_RESOLUTION_WIDTH, CV_8UC3, frame.data_for_wrap);
 
-            if (display_counter % 30 == 0) {
-                this_time = get_wall_time();
-                FPS = 30.0f / (this_time - last_pop_time);
-                global.uistate.fps = FPS;
-                //LOG(ERROR) << frame.cols << "  " << frame.rows;
-                last_time = this_time;
-                char msg[1000];
-                sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
-                      frame.index, frame.numPeople,
-                      this_time - frame.commit_time,
-                      frame.preprocessed_time - frame.commit_time,
-                      frame.gpu_fetched_time - frame.preprocessed_time,
-                      frame.gpu_computed_time - frame.gpu_fetched_time,
-                      frame.postprocesse_begin_time - frame.gpu_computed_time,
-                      frame.postprocesse_end_time - frame.postprocesse_begin_time,
-                      frame.buffer_start_time - frame.postprocesse_end_time,
-                      frame.buffer_end_time - frame.buffer_start_time,
-                      this_time - frame.buffer_end_time,
-                      FPS);
-                LOG(INFO) << msg;
-                last_pop_time = get_wall_time();
-            }
-            
-            if (FLAGS_write_frames.empty()) {
-                snprintf(tmp_str, 256, "%4.1f fps", FPS);
+        if (display_counter % 30 == 0) {
+            this_time = get_wall_time();
+            FPS = 30.0f / (this_time - last_pop_time);
+            global.uistate.fps = FPS;
+            //LOG(ERROR) << frame.cols << "  " << frame.rows;
+            last_time = this_time;
+            char msg[1000];
+            sprintf(msg, "# %d, NP %d, Latency %.3f, Preprocess %.3f, QueueA %.3f, GPU %.3f, QueueB %.3f, Postproc %.3f, QueueC %.3f, Buffered %.3f, QueueD %.3f, FPS = %.1f",
+                  frame.index, frame.numPeople,
+                  this_time - frame.commit_time,
+                  frame.preprocessed_time - frame.commit_time,
+                  frame.gpu_fetched_time - frame.preprocessed_time,
+                  frame.gpu_computed_time - frame.gpu_fetched_time,
+                  frame.postprocesse_begin_time - frame.gpu_computed_time,
+                  frame.postprocesse_end_time - frame.postprocesse_begin_time,
+                  frame.buffer_start_time - frame.postprocesse_end_time,
+                  frame.buffer_end_time - frame.buffer_start_time,
+                  this_time - frame.buffer_end_time,
+                  FPS);
+            LOG(INFO) << msg;
+            last_pop_time = get_wall_time();
+        }
+        
+        if (FLAGS_write_frames.empty()) {
+            snprintf(tmp_str, 256, "%4.1f fps", FPS);
+        } else {
+            snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
+        }
+        
+        if (1) {
+        cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
+
+        snprintf(tmp_str, 256, "%4d", frame.numPeople);
+        cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100+2, 35+2),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
+        cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100, 35),
+            cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
+        }
+        if (global.part_to_show!=0) {
+            if (global.part_to_show-1<=net_copies.at(0).up_model_descriptor->get_number_parts()) {
+                snprintf(tmp_str, 256, "%10s", net_copies.at(0).up_model_descriptor->get_part_name(global.part_to_show-1).c_str());
             } else {
-                snprintf(tmp_str, 256, "%4.2f s/gpu", FLAGS_num_gpu*1.0/FPS);
-            }
-            
-            if (1) {
-            cv::putText(wrap_frame, tmp_str, cv::Point(25,35),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,150,150), 1);
-
-            snprintf(tmp_str, 256, "%4d", frame.numPeople);
-            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100+2, 35+2),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0,0,0), 2);
-            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-100, 35),
-                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(150,150,255), 2);
-            }
-            if (global.part_to_show!=0) {
-                if (global.part_to_show-1<=net_copies.at(0).up_model_descriptor->get_number_parts()) {
-                    snprintf(tmp_str, 256, "%10s", net_copies.at(0).up_model_descriptor->get_part_name(global.part_to_show-1).c_str());
+                int aff_part = ((global.part_to_show-1)-net_copies.at(0).up_model_descriptor->get_number_parts()-1)*2;
+                if (aff_part==0) {
+                    snprintf(tmp_str, 256, "%10s", "PAFs");
                 } else {
-                    int aff_part = ((global.part_to_show-1)-net_copies.at(0).up_model_descriptor->get_number_parts()-1)*2;
-                    if (aff_part==0) {
-                        snprintf(tmp_str, 256, "%10s", "PAFs");
-                    } else {
-                        aff_part = aff_part-2;
-                        aff_part += 1+net_copies.at(0).up_model_descriptor->get_number_parts();
-                        std::string uvname = net_copies.at(0).up_model_descriptor->get_part_name(aff_part);
-                        std::string conn = uvname.substr(0, uvname.find("("));
-                        snprintf(tmp_str, 256, "%10s", conn.c_str());
-                    }
+                    aff_part = aff_part-2;
+                    aff_part += 1+net_copies.at(0).up_model_descriptor->get_number_parts();
+                    std::string uvname = net_copies.at(0).up_model_descriptor->get_part_name(aff_part);
+                    std::string conn = uvname.substr(0, uvname.find("("));
+                    snprintf(tmp_str, 256, "%10s", conn.c_str());
                 }
-                cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
             }
-            if (!FLAGS_video.empty() && FLAGS_write_frames.empty()) {
-                snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
-                // cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
-                //     cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
-                cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
-            }
-            cout<< "Adding strings on images takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
-            if (!FLAGS_no_display) {
-                // cv::imshow("video", wrap_frame);
-                publishImgToROS(wrap_frame);
-                printf("Published one Image. \n");
-            }
-            cout<< "Adding strings and publish images takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
+            cv::putText(wrap_frame, tmp_str, cv::Point(DISPLAY_RESOLUTION_WIDTH-175+1, 55+1),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,255,255), 1);
+        }
+        if (!FLAGS_video.empty() && FLAGS_write_frames.empty()) {
+            snprintf(tmp_str, 256, "Frame %6d", global.uistate.current_frame);
+            // cv::putText(wrap_frame, tmp_str, cv::Point(27,37),
+            //     cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,0), 2);
+            cv::putText(wrap_frame, tmp_str, cv::Point(25,55),
+                cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255,255,255), 1);
+        }
+        cout<< "Adding strings on images takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
+        if (!FLAGS_no_display) {
+            // cv::imshow("video", wrap_frame);
+            publishImgToROS(wrap_frame);
+            printf("Published one Image. \n");
+        }
+        cout<< "Adding strings and publish images takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
 
-            // Now publish the position of each joint.
-            if (1) {
-            	// printf("in the loop. \n");
-            double scale = 1.0/frame.scale;
-            const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
-            char fname[256];
-            // if (FLAGS_image_dir.empty()) {
-                // sprintf(fname, "%s/frame%06d.json", FLAGS_write_json.c_str(), frame.video_frame_number);
-            // } else {
-                // boost::filesystem::path p(global.image_list[frame.video_frame_number]);
-                // std::string rawname = p.stem().string();
+        // Now publish the position of each joint.
+        if (1) {
+        	// printf("in the loop. \n");
+        double scale = 1.0/frame.scale;
+        const int num_parts = net_copies.at(0).up_model_descriptor->get_number_parts();
+        char fname[256];
+        // if (FLAGS_image_dir.empty()) {
+            // sprintf(fname, "%s/frame%06d.json", FLAGS_write_json.c_str(), frame.video_frame_number);
+        // } else {
+            // boost::filesystem::path p(global.image_list[frame.video_frame_number]);
+            // std::string rawname = p.stem().string();
 
-                // sprintf(fname, "%s/%s.json", FLAGS_write_json.c_str(), rawname.c_str());
-            // }
-            // std::ofstream fs(fname);
-            // fs << "{\n";
-            // fs << "\"version\":0.1,\n";
-            // fs << "\"bodies\":[\n";
-            // for (int ip=0;ip<frame.numPeople;ip++) {
-            //     fs << "{\n" << "\"joints\":" << "[";
-            //     for (int ij=0;ij<num_parts;ij++) {
-            //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
-            //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
-            //         fs << frame.joints[ip*num_parts*3 + ij*3+2];
-            //         if (ij<num_parts-1) fs << ",";
-            //     }
-            //     fs << "]\n";
-            //     fs << "}";
-            //     if (ip<frame.numPeople-1) {
-            //         fs<<",\n";
-            //     }
-            // }
-            // fs << "]\n";
-            // fs << "}\n";
-            // // last_time += get_wall_time()-a;
-
-
-			//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME
-            std_msgs::String msg;
-            std::stringstream ss;
-            ss << "\"bodies\":[\n";
-            for (int ip=0;ip<frame.numPeople;ip++) {
-                ss << "{\n" << "\"joints\":" << "[";
-                for (int ij=0;ij<num_parts;ij++) {
-                    //for loop, pushing data in the size of the array
-                    array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+0]); // these three lines are used for publishing result into array
-                    array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+1]); // these three lines are used for publishing result into array
-                    array.data.push_back(frame.joints[ip*num_parts*3 + ij*3+2]); // these three lines are used for publishing result into array
+            // sprintf(fname, "%s/%s.json", FLAGS_write_json.c_str(), rawname.c_str());
+        // }
+        // std::ofstream fs(fname);
+        // fs << "{\n";
+        // fs << "\"version\":0.1,\n";
+        // fs << "\"bodies\":[\n";
+        // for (int ip=0;ip<frame.numPeople;ip++) {
+        //     fs << "{\n" << "\"joints\":" << "[";
+        //     for (int ij=0;ij<num_parts;ij++) {
+        //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
+        //         fs << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
+        //         fs << frame.joints[ip*num_parts*3 + ij*3+2];
+        //         if (ij<num_parts-1) fs << ",";
+        //     }
+        //     fs << "]\n";
+        //     fs << "}";
+        //     if (ip<frame.numPeople-1) {
+        //         fs<<",\n";
+        //     }
+        // }
+        // fs << "]\n";
+        // fs << "}\n";
+        // // last_time += get_wall_time()-a;
 
 
-                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
-                    ss << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
-                    ss << frame.joints[ip*num_parts*3 + ij*3+2];
-                    if (ij<num_parts-1) ss << ",";
-                }
-                ss << "]\n";
-                ss << "}";
-                if (ip<frame.numPeople-1) {
-                    ss<<",\n";
-                }
+		//Publish the joint of each people into ROS topic PUBLISH_STR_TOPIC_NAME
+        std_msgs::String msg;
+        std::stringstream ss;
+        ss << "\"bodies\":[\n";
+        for (int ip=0;ip<frame.numPeople;ip++) {
+            ss << "{\n" << "\"joints\":" << "[";
+            for (int ij=0;ij<num_parts;ij++) {
+                //for loop, pushing data in the size of the array
+                array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+0]); // these three lines are used for publishing result into array
+                array.data.push_back(scale*frame.joints[ip*num_parts*3 + ij*3+1]); // these three lines are used for publishing result into array
+                array.data.push_back(frame.joints[ip*num_parts*3 + ij*3+2]); // these three lines are used for publishing result into array
+
+
+                ss << scale*frame.joints[ip*num_parts*3 + ij*3+0] << ",";
+                ss << scale*frame.joints[ip*num_parts*3 + ij*3+1] << ",";
+                ss << frame.joints[ip*num_parts*3 + ij*3+2];
+                if (ij<num_parts-1) ss << ",";
             }
             ss << "]\n";
-            msg.data = ss.str();
-            poseStrPublisher.publish(msg);// Buffer size was set = 1000
-            poseAryPublisher.publish(array);
-            cout<< "Adding strings and publish images and arys takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
-            
-
+            ss << "}";
+            if (ip<frame.numPeople-1) {
+                ss<<",\n";
+            }
         }
+        ss << "]\n";
+        msg.data = ss.str();
+        poseStrPublisher.publish(msg);// Buffer size was set = 1000
+        poseAryPublisher.publish(array);
+        cout<< "Adding strings and publish images and arys takes : " <<get_wall_time()-displayROSFrametime<<" seconds"<< endl;
+        
+
+    }
 
 
-            display_counter++;
+        display_counter++;
 
-            delete [] frame.data_for_mat;
-            delete [] frame.data_for_wrap;
-            delete [] frame.data;
+        delete [] frame.data_for_mat;
+        delete [] frame.data_for_wrap;
+        delete [] frame.data;
 
-            //LOG(ERROR) << msg;
-            int key = cv::waitKey(1);
-            
-            VLOG(2) << "Display time " << (get_wall_time()-tic)*1000.0 << " ms.";
-        }
+        //LOG(ERROR) << msg;
+        int key = cv::waitKey(1);
+        
+        VLOG(2) << "Display time " << (get_wall_time()-tic)*1000.0 << " ms.";
+    }
 }
 
 int rtcpm() {
     const auto timer_begin = std::chrono::high_resolution_clock::now();
+
+    for(int gpu = 0; gpu < NUM_GPU; gpu++) {
+        processing.push_back(true);
+    }
 
     // Opening processing deep net threads
     pthread_t gpu_threads_pool[NUM_GPU];
@@ -1801,6 +1848,7 @@ int rtcpm() {
             LOG(ERROR) << "Error:unable to create thread," << rc << "\n";
             return -1;
         }
+        processing[gpu] = false;
     }
     LOG(INFO) << "Finish spawning " << NUM_GPU << " threads." << "\n";
 
@@ -2127,7 +2175,15 @@ int main(int argc, char *argv[]) {
     
     image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, getFrameFromROS);
 
-    image_transport::Subscriber sub2 = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, displayROSFrame); //Actually This is used for publish frame
+    ros::Rate loop_rate(60);
+    while(ros::ok()){
+        // ROS_INFO("Try to run displayROSFrame()");
+        displayROSFrame();
+        ros::spinOnce();
+        loop_rate.sleep();
+    }
+
+    // image_transport::Subscriber sub2 = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, displayROSFrame); //Actually This is used for publish frame
 
     ros::spin();
 

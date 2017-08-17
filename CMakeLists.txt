@@ -301,6 +301,7 @@ add_executable(rtpose_node_forecam src/rtpose_node_forecam.cpp)
 add_executable(rtpose_node_fotonic src/rtpose_node_fotonic.cpp)
 #add_executable(rtpose_node_fotonic_pcd src/rtpose_node_fotonic_pcd.cpp)
 add_executable(rtpose_stereo src/rtpose_stereo.cpp)
+add_executable(rtpose_hackstereo src/rtpose_hackstereo.cpp)
 target_link_libraries(
         rtpose_node
         ${catkin_LIBRARIES}
@@ -357,8 +358,16 @@ target_link_libraries(
         ${OpenCV_LIBS}
 	${PCL_LIBRARY_DIRS}
     )
-add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo ${PROJECT_NAME}_gencfg)
-ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo Lib)
+
+target_link_libraries(
+        rtpose_hackstereo
+	hungarian
+        ${catkin_LIBRARIES}
+        ${OpenCV_LIBS}
+	${PCL_LIBRARY_DIRS}
+    )
+add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo rtpose_hackstereo ${PROJECT_NAME}_gencfg)
+ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_stereo rtpose_hackstereo Lib)
 # add_dependencies(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_node_fotonic_pcd rtpose_stereo ${PROJECT_NAME}_gencfg)
 # ADD_DEPENDENCIES(rtpose_node rtpose_node_left rtpose_node_right rtpose_node_original_ros rtpose_node_just_sub rtpose_node_forecam rtpose_node_fotonic rtpose_node_fotonic_pcd rtpose_stereo Lib)
 target_link_libraries(rtpose_node ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
@@ -370,3 +379,4 @@ target_link_libraries(rtpose_node_forecam ${catkin_LIBRARIES} ${OpenCV_LIBRARIES
 target_link_libraries(rtpose_node_fotonic ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 # target_link_libraries(rtpose_node_fotonic_pcd ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
 target_link_libraries(rtpose_stereo ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)
+target_link_libraries(rtpose_hackstereo ${catkin_LIBRARIES} ${OpenCV_LIBRARIES} ${PCL_LIBRARIES} Lib caffe glog)

@@ -2493,7 +2493,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
         Fund_matrix(2,1) = -0.18121823;
         Fund_matrix(2,2) = 0.14064993;
         
-        std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
+        // std::cout << "Fund_matrix is: "<< Fund_matrix << std::endl;
 
         // Camera1 is the left camera, camera2 is thre right camera
         std::vector<cv::Vec<float,3>> epilines1, epilines2;
@@ -2506,7 +2506,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
             for (int ij=0;ij<num_parts;ij++) {
                 float x_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+0]);
                 float y_pixel = float(detect_result.left_data[ip*num_parts*3 + ij*3+1]);
-                std::cout << "detect_result.left_data: "<< x_pixel << "," << y_pixel << std::endl;
+                // std::cout << "detect_result.left_data: "<< x_pixel << "," << y_pixel << std::endl;
                 // std::cout << "detect_result.left_data, float: "<< float(detect_result.left_data[ip*num_parts*3 + ij*3+0]) << std::endl;
                 // point1 is a Nx2 marix and data are stored in a row major order, which means points1.data[1] is the second number in the first row!!
                 mp1[(ip*num_parts+ij)*2] = float(x_pixel);          // x pixel 
@@ -2518,7 +2518,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
             for (int ij=0;ij<num_parts;ij++) {
                 float x_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+0];
                 float y_pixel = detect_result.right_data[ip*num_parts*3 + ij*3+1];
-                std::cout << "detect_result.right_data: "<< x_pixel << "," << y_pixel << std::endl;
+                // std::cout << "detect_result.right_data: "<< x_pixel << "," << y_pixel << std::endl;
                 mp2[(ip*num_parts+ij)*2] = float(x_pixel);         // x pixel 
                 mp2[(ip*num_parts+ij)*2 +1] = float(y_pixel);      // y pixel  
             }
@@ -2725,32 +2725,32 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                 costMatrix.push_back(cost_row);
             }
         }
-        std::cout << "costMatrix row size() is: " << costMatrix.size() << std::endl;
-        std::cout << "costMatrix col size() is: " << costMatrix[0].size() << std::endl;
+        // std::cout << "costMatrix row size() is: " << costMatrix.size() << std::endl;
+        // std::cout << "costMatrix col size() is: " << costMatrix[0].size() << std::endl;
         // std::cout << "costMatrix is: " << costMatrix[0][0] << std::endl;
-        std::cout << "costMatrix is: "<< std::endl;
-        std::cout << "[";
-        for (unsigned int x = 0; x < costMatrix.size(); x++){
-            for (unsigned int y = 0; y < costMatrix[0].size(); y++){
-                std::cout << costMatrix[x][y];
-                if(y == costMatrix[0].size()-1){
-                    std::cout << ";";
-                    if(x < costMatrix.size()-1){
-                        std::cout << std::endl;
-                    } 
-                }
-                else{
-                    std::cout << ",";
-                }
-            }
-        }
-        std::cout << "]" << std::endl;
+        // std::cout << "costMatrix is: "<< std::endl;
+        // std::cout << "[";
+        // for (unsigned int x = 0; x < costMatrix.size(); x++){
+        //     for (unsigned int y = 0; y < costMatrix[0].size(); y++){
+        //         std::cout << costMatrix[x][y];
+        //         if(y == costMatrix[0].size()-1){
+        //             std::cout << ";";
+        //             if(x < costMatrix.size()-1){
+        //                 std::cout << std::endl;
+        //             } 
+        //         }
+        //         else{
+        //             std::cout << ",";
+        //         }
+        //     }
+        // }
+        // std::cout << "]" << std::endl;
 
         // Data association
         HungarianAlgorithm HungAlgo;
         vector<int> assignment;
         double cost_total = HungAlgo.Solve(costMatrix, assignment);
-        std::cout << "cost_total is: " << cost_total << std::endl;
+        // std::cout << "cost_total is: " << cost_total << std::endl;
 
         // Now, rearrange the detection results to two new Mat variables "points1_new" and "points2_new", and only keep the associated data
         double cost_of_non_assignment = 2;
@@ -2760,7 +2760,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
             if(x<left_num && assignment[x]<right_num && costMatrix[x][assignment[x]]<cost_of_non_assignment){
                 useful_pair_num++;
                 useful_left_index.push_back(x);
-                std::cout << "assignment : " << x << "," << assignment[x] << std::endl;
+                // std::cout << "assignment : " << x << "," << assignment[x] << std::endl;
             }
             
         }
@@ -2782,8 +2782,8 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                 mp1_new[useful_pair_num*num_parts + i*num_parts + ip] = mp1[2*useful_left_index[i]*num_parts + 2*ip + 1];
                 mp2_new[i*num_parts + ip] = mp2[2*assignment[i]*num_parts + 2*ip];
                 mp2_new[useful_pair_num*num_parts + i*num_parts + ip] = mp2[2*assignment[i]*num_parts + 2*ip + 1];
-                std::cout << "mp1_new[" << i*num_parts + ip<< "] is :"<< mp1_new[i*num_parts + ip]  << std::endl;
-                std::cout << "mp1_new[" << useful_pair_num*num_parts + i*num_parts + ip<< "] is :"<< mp1_new[useful_pair_num*num_parts + i*num_parts + ip]  << std::endl;
+                // std::cout << "mp1_new[" << i*num_parts + ip<< "] is :"<< mp1_new[i*num_parts + ip]  << std::endl;
+                // std::cout << "mp1_new[" << useful_pair_num*num_parts + i*num_parts + ip<< "] is :"<< mp1_new[useful_pair_num*num_parts + i*num_parts + ip]  << std::endl;
                 if (mp1_new[i*num_parts + ip]>0 && mp1_new[useful_pair_num*num_parts + i*num_parts + ip]>0 
                     && mp2_new[i*num_parts + ip]>0 && mp2_new[useful_pair_num*num_parts + i*num_parts + ip]>0){
                     pairable.push_back(true);
@@ -2816,14 +2816,14 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                         0.568683184255626,      6.862260202986158e+02,      3.669708775317395e+02,      41.300045426985930,
                         0.001807530056100,      0.002486775876403,          1,                          0.057181250835122);
         // cout << "P1\n" << cv::Mat(Camera_P0) << endl;
-        cout << "Camera_P0\n" << Camera_P1 << endl;
-        cout << "points1_new\n" << points1_new << endl;
-        cout << "points2_new\n" << points2_new << endl;
+        // cout << "Camera_P0\n" << Camera_P1 << endl;
+        // cout << "points1_new\n" << points1_new << endl;
+        // cout << "points2_new\n" << points2_new << endl;
         cv::Mat pt_3d_h(4,useful_pair_num,CV_32FC1);
 
         cv::triangulatePoints(Camera_P1, Camera_P2, points1_new, points2_new, pt_3d_h);
         // Since the triangulation uses a SVD to compute the solution, the points in pt_3d_h are normalized to unit vectors.
-        std::cout << "pt_3d_h is: " << pt_3d_h << std::endl;
+        // std::cout << "pt_3d_h is: " << pt_3d_h << std::endl;
         // std::cout << "pt_3d_h.at<float>(0) is: " << pt_3d_h.at<float>(1,15) << std::endl;
         // vector<cv::Point3f> pt_3d;
         // cv::convertPointsFromHomogeneous(pt_3d_h.reshape(4, 1), pt_3d);
@@ -2845,7 +2845,7 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
                         pairable[i*num_parts + j] = false;
                     }
                     else{
-                        std::cout << "point is: " << point << std::endl;
+                        // std::cout << "point is: " << point << std::endl;
                         cloud_3d->points.push_back (point);
                     }
                     
@@ -3241,6 +3241,10 @@ void reconstruct_3d_pose(const rtpose_ros::Detection detect_result)  {
             state.y = -pt_3d_h.at<float>(0,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
             state.x = pt_3d_h.at<float>(2,i*num_parts + 1)/pt_3d_h.at<float>(3,i*num_parts + 1)/1000;
             state.theta = atan2(orient_y,orient_x);
+            ROS_INFO("For deteciton #%i:", i);
+            ROS_INFO("state.x = %f", state.x);
+            ROS_INFO("state.y = %f", state.y);
+            ROS_INFO("state.theta = %f", state.theta);
             obs.poses.push_back(state);
             obs.time = ros::Time::now().toSec();
 
@@ -3420,6 +3424,9 @@ int main(int argc, char *argv[]) {
     message_filters::Subscriber<sensor_msgs::Image> right_image_sub(nh, RECEIVE_RIGHT_IMG_TOPIC_NAME, 1);
     message_filters::TimeSynchronizer<sensor_msgs::Image, sensor_msgs::Image> sync(left_image_sub, right_image_sub, 10);
     sync.registerCallback(boost::bind(&getStereoFrameFromROS, _1, _2));
+
+    // Publish the result stereo images to ROS if images are ready in global.output_queue_ordered
+    // image_transport::Subscriber sub2 = it.subscribe(RECEIVE_LEFT_IMG_TOPIC_NAME, 1, displayROSFrameStereo); //Actually This is used for publish frame
 
     // Start to reconstruct the 3d pose by epipolar geometry if any detection result has been generated.
     ros::Subscriber sub3 = nh.subscribe(PUBLISH_DETECTION_NAME,1,reconstruct_3d_pose);

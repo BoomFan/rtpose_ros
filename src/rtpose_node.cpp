@@ -113,7 +113,7 @@ std::string PERSON_DETECTOR_PROTO;      //person detector
 std::string POSE_ESTIMATOR_PROTO;       //pose estimator
 const auto MAX_PEOPLE = RENDER_MAX_PEOPLE;  // defined in render_functions.hpp
 const auto BOX_SIZE = 368;
-const auto BUFFER_SIZE = 4;    //affects latency
+const auto BUFFER_SIZE = 0;    //affects latency, default is 4
 const auto MAX_NUM_PARTS = 70;
 
 // Start ---------- My own define ----------Fan Bu
